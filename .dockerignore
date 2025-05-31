@@ -1,0 +1,15 @@
+*.pyc
+.env
+__pycache__/
+*.pyo
+*.pyd
+.git/
+.ebignore
+Dockerfile
+Dockerrun.aws.json
+server.py
+build/
+dist/
+.elasticbeanstalk/
+*.md
+

@@ -1,0 +1,20 @@
+# .ebignore
+
+# don’t upload your local venv or env file
+venv/
+.env
+
+# node & IDE cruft
+node_modules/
+.idea/
+*.swp
+*.pyc
+
+# Docker‑only (you’re using a Dockerfile, not Dockerrun.aws.json)
+Dockerrun.aws.json
+
+# Git history
+.git/
+
+# temp data you only write at runtime
+temp_uploads/
