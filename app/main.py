@@ -16,6 +16,7 @@ from app.routers import (
     temp_cleanup,
     compare, 
     browse_user_routes,
+    map_locations,
 )
 
 
@@ -55,6 +56,7 @@ app.include_router(auth.router, prefix="/api", tags=["Authentication"])
 app.include_router(temp_cleanup.router, prefix="/api", tags=["Temp File Cleanup"])
 app.include_router(compare.router, prefix="/api", tags=["Keypoint Comparison"])
 app.include_router(browse_user_routes.router, prefix="/api", tags=["Browse User Routes"])
+app.include_router(map_locations.router, prefix="/api", tags=["Map Locations"])
 
 #for route in app.routes:
     #print("Route:", route.path)

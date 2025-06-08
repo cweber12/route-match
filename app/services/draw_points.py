@@ -37,8 +37,8 @@ def apply_transform(T, landmarks):
 # correct coordinates
 def draw_pose(img, landmarks):
     h, w = img.shape[:2]
-    line_thickness = max(2, int(round(min(w, h) * 0.003)))
-    circle_radius = max(3, int(round(min(w, h) * 0.005)))
+    line_thickness = max(2, int(round(min(w, h) * 0.002)))
+    circle_radius = max(2, int(round(min(w, h) * 0.004)))
 
     for start, end in POSE_CONNECTIONS:
         if start in landmarks and end in landmarks:
@@ -52,15 +52,10 @@ def draw_pose(img, landmarks):
             pt1 = tuple(np.round(pt1).astype(int))
             pt2 = tuple(np.round(pt2).astype(int))
 
-            # Choose color based on side
-            if start in LEFT_LANDMARKS and end in LEFT_LANDMARKS:
-                color = (0, 121, 255)
-            elif start in RIGHT_LANDMARKS and end in RIGHT_LANDMARKS:
-                color = (246, 250, 112)
-            else:
-                color = (0, 223, 162)
-
-            cv2.line(img, pt1, pt2, color, line_thickness)
+            # Use a bright lime green for all lines
+            color = (0, 255, 0)  # BGR for bright lime green
+            # Draw anti-aliased, thicker lines for sharpness
+            cv2.line(img, pt1, pt2, color, max(line_thickness, 4), lineType=cv2.LINE_AA)
 
     for idx, pt in landmarks.items():
         # Ensure pt is (x, y)
@@ -68,12 +63,7 @@ def draw_pose(img, landmarks):
             continue
         pt = tuple(np.round(pt).astype(int))
 
-        if idx in LEFT_LANDMARKS:
-            color = (255, 0, 96)
-        elif idx in RIGHT_LANDMARKS:
-            color = (255, 45, 241)
-        else:
-            color = (124, 0, 254)
-
-        cv2.circle(img, pt, circle_radius, color, -1)
+        # Use a bright blue for all points, and make them smaller
+        color = (255, 0, 0)  # BGR for bright blue
+        cv2.circle(img, pt, max(circle_radius // 2, 2), color, -1, lineType=cv2.LINE_AA)
 

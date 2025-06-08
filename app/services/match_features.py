@@ -7,11 +7,11 @@ def match_features(
     desc1,
     desc2,
     ratio_thresh,
-    distance_thresh=300,
-    top_n=150,
-    min_required_matches=10,
+    distance_thresh,
+    top_n,
+    min_required_matches,
     prev_query_indices=None,
-    min_shared_matches=5,
+    min_shared_matches=0,
     debug=False
 ):
 

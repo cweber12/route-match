@@ -261,6 +261,19 @@ def create_video_from_static_image_streamed(
                 top_n=150,
                 debug=True
             )
+            # If not enough matches, try again with looser thresholds
+            if not next_matches or len(next_matches) < 10:
+                print("Retrying match_features with looser thresholds...")
+                next_matches = match_features(
+                    next_desc, ref_desc,
+                    prev_query_indices=prev_query_indices,
+                    min_shared_matches=0,
+                    ratio_thresh=0.85,
+                    distance_thresh=500,
+                    min_required_matches=3,
+                    top_n=200,
+                    debug=True
+                )
 
             if not next_matches:
                 j += 1

@@ -17,17 +17,16 @@ def detect_sift(image, sift_config=None, use_clahe=False, clahe_config=None, use
     if use_hist_eq:
         gray = cv2.equalizeHist(gray)
 
+    if use_clahe:
+        clahe_config = clahe_config or {}
+        clip_limit = clahe_config.get("clipLimit", 2.0)
+        tile_grid_size = clahe_config.get("tileGridSize", (8, 8))
+        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+        gray = clahe.apply(gray)
+
     # Apply normalization if requested (scales pixel values to full 0-255 range)
     if use_normalize:
         gray = cv2.normalize(gray, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-
-    # Apply CLAHE if requested (should not combine with hist_eq/normalize)
-    #if use_clahe:
-        #clahe_config = clahe_config or {}
-        #clip_limit = clahe_config.get("clipLimit", 2.0)
-        #tile_grid_size = clahe_config.get("tileGridSize", (8, 8))
-        #clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-        #gray = clahe.apply(gray)
 
     # Run SIFT
     keypoints, descriptors = sift.detectAndCompute(gray, None)

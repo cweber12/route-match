@@ -47,9 +47,18 @@ async def compare_image(
 ):
     try:
         print("Starting compare_image route")
+        # Clear temp_uploads folder before saving new image
+        temp_dir = "temp_uploads"
+        if os.path.exists(temp_dir):
+            for filename in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
         # Save uploaded image to temp storage
-        os.makedirs("temp_uploads", exist_ok=True)
-        temp_image_path = os.path.join("temp_uploads", "compare_image.jpg")
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_image_path = os.path.join(temp_dir, "compare_image.jpg")
         with open(temp_image_path, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
         print(f"Saved uploaded image: {temp_image_path}")
@@ -94,6 +103,9 @@ async def compare_image(
             convert_video_for_browser(raw_path, browser_ready)
 
             print("Returning preview video response")
+            # Delete the uploaded image after video creation
+            if os.path.exists(temp_image_path):
+                os.remove(temp_image_path)
             return JSONResponse({
                 "message": "Preview video created successfully.",
                 "video_url": "/static/pose_feature_data/output_video/output_video_browser.mp4"
@@ -138,6 +150,9 @@ async def compare_image(
         convert_video_for_browser(raw_path, browser_ready)
 
         print("Returning production video response")
+        # Delete the uploaded image after video creation
+        if os.path.exists(temp_image_path):
+            os.remove(temp_image_path)
         return JSONResponse({
             "message": "Comparison video created successfully.",
             "video_url": "/static/pose_feature_data/output_video/output_video_browser.mp4"
@@ -306,10 +321,11 @@ def transform_poses_to_image(
     from app.services.draw_points import apply_transform
     
     h_full, w_full = ref_img.shape[:2]
-    x1_s = int(w_full / sift_left)
-    x2_s = int(w_full - w_full / sift_right)
-    y1_s = int(h_full / sift_up)
-    y2_s = int(h_full - h_full / sift_down)
+    x1_s = int(sift_left / 100 * w_full)
+    y1_s = int(sift_up / 100 * h_full)
+    x2_s = int(w_full - (sift_right / 100) * w_full)
+    y2_s = int(h_full - (sift_down / 100) * h_full)
+   
     bbox = (x1_s, y1_s, x2_s, y2_s)
 
     ref_kp, ref_desc = detect_sift(ref_img, sift_config=sift_config, use_clahe=False, bbox=bbox)

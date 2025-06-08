@@ -54,3 +54,4 @@ def write_pose_video(output_path, ref_img, transformed, fps=24):
     draw_pose(frame_end, transformed[frame_keys[-1]])
     writer.write(frame_end)
     writer.release()
+    

@@ -1,31 +1,60 @@
-# Use official Python image as base
-FROM python:3.11-slim
+################################################################################
+# Stage 1 — builder: install Python deps & build wheels on Alpine
+################################################################################
+FROM python:3.11-alpine AS builder
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# Install build dependencies
+RUN apk add --no-cache \
+    build-base \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    openssl-dev \
+    ffmpeg-dev \
+    jpeg-dev \
+    zlib-dev \
+    tiff-dev \
+    libpng-dev \
+    openblas-dev \
+    freetype-dev \
+    linux-headers \
+    pkgconfig
 
-# Set work directory
-WORKDIR /app
+WORKDIR /tmp/app
 
-# Install Python dependencies
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
-RUN apt-get update && apt-get install -y ffmpeg
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
 COPY . .
 
+################################################################################
+# Stage 2 — runtime: minimal Alpine with only runtime deps
+################################################################################
+FROM python:3.11-alpine
 
+RUN apk add --no-cache \
+    ffmpeg \
+    libjpeg-turbo \
+    zlib \
+    tiff \
+    libpng \
+    openblas \
+    freetype \
+    libwebp \
+    libwebp-dev
 
-# Create temporary uploads directory
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    AWS_DEFAULT_REGION=us-east-2
+
+# Copy installed Python packages from builder
+COPY --from=builder /usr/local /usr/local
+
+WORKDIR /app
+COPY --from=builder /tmp/app /app
+
 RUN mkdir -p /app/temp_uploads
 
-# Set AWS default region
-ENV AWS_DEFAULT_REGION=us-east-2
-
-# Expose port
-EXPOSE 80
-
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80"]
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
