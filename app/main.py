@@ -43,7 +43,7 @@ app.add_middleware(
         "http://localhost:5174",
         "http://127.0.0.1:5174",
         "http://3.17.191.244", 
-        "https://routemap-react-app.s3.us-east-2.amazonaws.com/vite.svg",     
+        "https://routemap-react-app.s3.us-east-2.amazonaws.com",     
         ],    
     allow_credentials=True,
     allow_methods=["*"],
