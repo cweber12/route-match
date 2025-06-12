@@ -11,7 +11,8 @@ import numpy as np
 from app.services.compare_pose import (
     load_pose_data_from_path,
     load_sift_data_from_path,
-    create_video_from_static_image,  
+    create_video_from_static_image,
+    create_video_from_static_image_streamed,  
     convert_video_for_browser,
     VIDEO_OUT_DIR,
     linear_interpolate_pose
@@ -70,48 +71,6 @@ async def compare_image(
             print("Failed to read uploaded image with cv2.imread")
             raise HTTPException(500, "Failed to read uploaded image.")
 
-        # PREVIEW MODE: use local JSONs if provided
-        if pose_lm_in and sift_kp_in:
-            print(f"Preview mode: pose_lm_in={pose_lm_in}, sift_kp_in={sift_kp_in}")
-            pose_path = os.path.join("temp_uploads", pose_lm_in)
-            sift_path = os.path.join("temp_uploads", sift_kp_in)
-            print(f"Pose path: {pose_path}, SIFT path: {sift_path}")
-            if not os.path.exists(pose_path) or not os.path.exists(sift_path):
-                print("Local pose or sift JSON not found.")
-                raise HTTPException(400, "Local pose or sift JSON not found.")
-
-            all_pose_data = load_json_from_path(pose_path)
-            print(f"Loaded pose data keys: {list(all_pose_data.keys())}")
-            sift_data = load_json_from_path(sift_path)
-            all_sift_keypoints = sift_data.get("keypoints", [])
-            all_sift_descriptors = sift_data.get("descriptors", [])
-            print(f"SIFT keypoints: {len(all_sift_keypoints)}, descriptors: {len(all_sift_descriptors)}")
-
-            # Convert keys to int for consistency
-            all_pose_data = {int(k): v for k, v in all_pose_data.items()}
-            print(f"Pose data keys after int conversion: {list(all_pose_data.keys())}")
-
-            print("Calling create_video_from_static_image (preview mode)")
-            create_video_from_static_image(
-                image_path=temp_image_path,
-                pose_landmarks=all_pose_data,
-                stored_keypoints_all=all_sift_keypoints,
-                stored_descriptors_all=all_sift_descriptors
-            )
-            raw_path = os.path.join(VIDEO_OUT_DIR, "output_video.mp4")
-            browser_ready = os.path.join(VIDEO_OUT_DIR, "output_video_browser.mp4")
-            print(f"Converting video for browser: {raw_path} -> {browser_ready}")
-            convert_video_for_browser(raw_path, browser_ready)
-
-            print("Returning preview video response")
-            # Delete the uploaded image after video creation
-            if os.path.exists(temp_image_path):
-                os.remove(temp_image_path)
-            return JSONResponse({
-                "message": "Preview video created successfully.",
-                "video_url": "/static/pose_feature_data/output_video/output_video_browser.mp4"
-            })
-
         # PRODUCTION MODE: load from S3 folders
         print("Production mode: loading from S3 folders")
         all_pose_data = {}
@@ -139,7 +98,7 @@ async def compare_image(
         print(f"Total SIFT keypoints: {len(all_sift_keypoints)}, descriptors: {len(all_sift_descriptors)}")
 
         print("Calling create_video_from_static_image(production mode)")
-        create_video_from_static_image(
+        create_video_from_static_image_streamed(
             image_path=temp_image_path,
             pose_landmarks=all_pose_data,
             stored_keypoints_all=all_sift_keypoints,
@@ -168,157 +127,6 @@ async def compare_image(
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": "Failed to process image."})
 
-@router.post("/compare-image-multi-skeleton")
-async def compare_image_multi_skeleton(
-    image: UploadFile = File(...),
-    s3_folders: List[str] = Form(...),
-    sift_left: float = Form(20.0),
-    sift_right: float = Form(20.0),
-    sift_up: float = Form(20.0),
-    sift_down: float = Form(20.0),
-):
-    """
-    Draws all pose skeletons from the given S3 folders on each frame, overlapping.
-    Most recent skeletons are drawn on top.
-    """
-    try:
-        print("Starting compare_image_multi_skeleton route")
-        os.makedirs("temp_uploads", exist_ok=True)
-        temp_image_path = os.path.join("temp_uploads", "compare_image_multi.jpg")
-        with open(temp_image_path, "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
-        print(f"Saved uploaded image: {temp_image_path}")
-
-        # Collect all transformed poses first
-        all_transformed_poses = []
-        all_frame_numbers = set()
-        
-        for i, folder in enumerate(sorted(s3_folders)):  # sort so latest is last (drawn on top)
-            key = folder.replace("s3://route-keypoints/", "").strip("/")
-            print(f"Processing folder {i+1}/{len(s3_folders)}: {key}")
-            
-            # Load pose and SIFT data for this folder
-            pose_data = load_pose_data_from_path(key)
-            sift_kps, sift_descs = load_sift_data_from_path(key)
-            
-            # Convert pose data to the format expected
-            formatted_pose_data = {}
-            for frame, items in pose_data.items():
-                if isinstance(items, list) and len(items) > 0:
-                    skeleton = items[0]
-                    if isinstance(skeleton, dict):
-                        formatted_skeleton = {}
-                        for joint_id, coords in skeleton.items():
-                            if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                                formatted_skeleton[joint_id] = {"x": float(coords[0]), "y": float(coords[1])}
-                            elif isinstance(coords, dict) and "x" in coords and "y" in coords:
-                                formatted_skeleton[joint_id] = {"x": float(coords["x"]), "y": float(coords["y"])}
-                        formatted_pose_data[int(frame)] = formatted_skeleton
-                elif isinstance(items, dict):
-                    formatted_skeleton = {}
-                    for joint_id, coords in items.items():
-                        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                            formatted_skeleton[joint_id] = {"x": float(coords[0]), "y": float(coords[1])}
-                        elif isinstance(coords, dict) and "x" in coords and "y" in coords:
-                            formatted_skeleton[joint_id] = {"x": float(coords["x"]), "y": float(coords["y"])}
-                    formatted_pose_data[int(frame)] = formatted_skeleton
-            
-            if not formatted_pose_data:
-                print(f"No valid pose data found for {key}")
-                continue
-            
-            # Transform this skeleton's poses to match the reference image
-            transformed_poses = transform_poses_to_image(
-                temp_image_path,
-                formatted_pose_data,
-                sift_kps,
-                sift_descs,
-                sift_left=sift_left,
-                sift_right=sift_right,
-                sift_up=sift_up,
-                sift_down=sift_down
-            )
-            if not transformed_poses or len(transformed_poses) == 0:
-                print(f"No valid transformed poses found for {key}")
-                continue
-
-            all_transformed_poses.append(transformed_poses)
-            all_frame_numbers.update(transformed_poses.keys())
-            print(f"Got {len(transformed_poses)} transformed frames for skeleton {i+1}")
-
-        if not all_transformed_poses:
-            raise HTTPException(500, "No valid transformed poses found")
-
-        # Interpolate missing frames for each skeleton
-        def interpolate_pose_dict(pose_dict, all_frames):
-            interp = {}
-            keys_sorted = sorted(pose_dict.keys())
-            for idx in range(len(keys_sorted) - 1):
-                f1, f2 = keys_sorted[idx], keys_sorted[idx + 1]
-                interp[f1] = pose_dict[f1]
-                gap = f2 - f1
-                if gap > 1:
-                    for j in range(1, gap):
-                        alpha = j / gap
-                        interp[f1 + j] = linear_interpolate_pose(pose_dict[f1], pose_dict[f2], alpha)
-            interp[keys_sorted[-1]] = pose_dict[keys_sorted[-1]]
-            # Fill in any missing frames (e.g., if frame numbers are not consecutive)
-            min_frame = min(all_frames)
-            max_frame = max(all_frames)
-            for frame_num in range(min_frame, max_frame + 1):
-                if frame_num not in interp:
-                    prev = max([k for k in interp if k < frame_num], default=None)
-                    nxt = min([k for k in interp if k > frame_num], default=None)
-                    if prev is not None and nxt is not None:
-                        alpha = (frame_num - prev) / (nxt - prev)
-                        interp[frame_num] = linear_interpolate_pose(interp[prev], interp[nxt], alpha)
-            return interp
-
-        # Interpolate all skeletons to cover all frames
-        all_frame_numbers = set()
-        for poses in all_transformed_poses:
-            all_frame_numbers.update(poses.keys())
-        all_frame_numbers = sorted(all_frame_numbers)
-        all_transformed_poses_interp = [interpolate_pose_dict(poses, all_frame_numbers) for poses in all_transformed_poses]
-
-        # Create video by drawing all skeletons on each frame
-        bg_img = cv2.imread(temp_image_path)
-        height, width = bg_img.shape[:2]
-        VIDEO_OUT_DIR = os.path.join("temp_uploads", "pose_feature_data", "output_video")
-        os.makedirs(VIDEO_OUT_DIR, exist_ok=True)
-        out_path = os.path.join(VIDEO_OUT_DIR, "output_video_multi.mp4")
-        writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), 24, (width, height))
-        if not writer.isOpened():
-            raise HTTPException(500, f"Failed to open video writer for {out_path}")
-
-        # For each frame number, draw all available skeletons (now all have all frames)
-        for frame_num in all_frame_numbers:
-            frame = bg_img.copy()
-            for transformed_poses in all_transformed_poses_interp:
-                if frame_num in transformed_poses:
-                    draw_pose(frame, transformed_poses[frame_num])
-            writer.write(frame)
-        writer.release()
-        print(f"Created multi-skeleton video with {len(all_frame_numbers)} frames (all skeletons interpolated)")
-
-        # Convert final video for browser
-        browser_ready = os.path.join(VIDEO_OUT_DIR, "output_video_multi_browser.mp4")
-        convert_video_for_browser(out_path, browser_ready)
-
-        print("Returning multi-skeleton video response")
-        return JSONResponse({
-            "message": "Multi-skeleton video created successfully.",
-            "video_url": "/static/pose_feature_data/output_video/output_video_multi_browser.mp4"
-        })
-
-    except HTTPException as he:
-        print("HTTPException in compare_image_multi_skeleton route:", he)
-        raise he
-    except Exception as e:
-        print("Error in compare_image_multi_skeleton route:", e)
-        import traceback
-        traceback.print_exc()
-        return JSONResponse(status_code=500, content={"error": "Failed to process multi-skeleton image."})
 
 @router.post("/compare-image-multi-cropped")
 async def compare_image_multi_cropped(
@@ -373,7 +181,7 @@ async def compare_image_multi_cropped(
         print(f"sift_kps length: {len(sift_kps)}, sift_descs length: {len(sift_descs)}")
         # Generate video for this folder
         video_out = os.path.join(VIDEO_OUT_DIR, f"output_video_{i+1}.mp4")
-        create_video_from_static_image(
+        create_video_from_static_image_streamed(
             image_path=temp_image_path,
             pose_landmarks=formatted_pose_data,
             stored_keypoints_all=sift_kps,

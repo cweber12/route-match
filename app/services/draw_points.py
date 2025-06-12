@@ -53,7 +53,7 @@ def draw_pose(img, landmarks):
             pt2 = tuple(np.round(pt2).astype(int))
 
             # Use a bright lime green for all lines
-            color = (0, 255, 0)  # BGR for bright lime green
+            color = (100, 255, 0)  # BGR for bright lime green
             # Draw anti-aliased, thicker lines for sharpness
             cv2.line(img, pt1, pt2, color, max(line_thickness, 4), lineType=cv2.LINE_AA)
 
@@ -64,6 +64,6 @@ def draw_pose(img, landmarks):
         pt = tuple(np.round(pt).astype(int))
 
         # Use a bright blue for all points, and make them smaller
-        color = (255, 0, 0)  # BGR for bright blue
+        color = (0, 100, 255)  # BGR for bright blue
         cv2.circle(img, pt, max(circle_radius // 2, 2), color, -1, lineType=cv2.LINE_AA)
 
