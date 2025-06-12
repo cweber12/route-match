@@ -240,7 +240,13 @@ def create_video_from_static_image_streamed(
     pose_landmarks,
     stored_keypoints_all,
     stored_descriptors_all,
-    output_video="output_video.mp4"
+    output_video="output_video.mp4",
+    sift_left=20.0,
+    sift_right=20.0,
+    sift_up=20.0,
+    sift_down=20.0,
+    line_color=(100,255,0),
+    point_color=(0,100,255)
 ):
     print("Starting streamed video generation")
     ref_img = cv2.imread(image_path)
@@ -254,8 +260,13 @@ def create_video_from_static_image_streamed(
             os.remove(os.path.join(VIDEO_OUT_DIR, file))
     out_path = os.path.join(VIDEO_OUT_DIR, output_video)
 
-    # Use pose_landmarks, stored_keypoints_all, stored_descriptors_all as provided (from S3)
-    # This matches the behavior of create_video_from_static_image
+    # Calculate SIFT bounding box from parameters
+    h_full, w_full = ref_img.shape[:2]
+    x1_s = int(sift_left / 100 * w_full)
+    y1_s = int(sift_up / 100 * h_full)
+    x2_s = int(w_full - (sift_right / 100) * w_full)
+    y2_s = int(h_full - (sift_down / 100) * h_full)
+    bbox = (x1_s, y1_s, x2_s, y2_s)
 
     sift_config = {
         "nfeatures": 2000,
@@ -264,11 +275,23 @@ def create_video_from_static_image_streamed(
         "sigma": 1.6
     }
 
-    ref_kp, ref_desc = detect_sift(
-        ref_img,
+    # Run SIFT on the cropped region, but transform keypoints to full-frame coordinates
+    ref_img_cropped = ref_img[y1_s:y2_s, x1_s:x2_s]
+    ref_kp_cropped, ref_desc = detect_sift(
+        ref_img_cropped,
         sift_config=sift_config,
-        use_clahe=False
+        use_clahe=False,
+        bbox=None
     )
+    # Transform cropped keypoints to full-frame coordinates
+    ref_kp = []
+    for kp in ref_kp_cropped:
+        kp_full = cv2.KeyPoint(
+            kp.pt[0] + x1_s,
+            kp.pt[1] + y1_s,
+            kp.size, kp.angle, kp.response, kp.octave, kp.class_id
+        )
+        ref_kp.append(kp_full)
 
     frame_keys = sorted([int(k) for k in pose_landmarks.keys()])
     height, width = ref_img.shape[:2]
@@ -320,7 +343,7 @@ def create_video_from_static_image_streamed(
             pose1, pose2 = transformed[f1], transformed[f2]
             # Write f1
             frame = ref_img.copy()
-            draw_pose(frame, pose1)
+            draw_pose(frame, pose1, line_color=line_color, point_color=point_color)
             writer.write(frame)
             gap = f2 - f1
             if gap > 1:
@@ -328,11 +351,11 @@ def create_video_from_static_image_streamed(
                     alpha = j / gap
                     interp_pose = linear_interpolate_pose(pose1, pose2, alpha)
                     frame_interp = ref_img.copy()
-                    draw_pose(frame_interp, interp_pose)
+                    draw_pose(frame_interp, interp_pose, line_color=line_color, point_color=point_color)
                     writer.write(frame_interp)
         # Write last frame
         frame = ref_img.copy()
-        draw_pose(frame, transformed[frame_keys_sorted[-1]])
+        draw_pose(frame, transformed[frame_keys_sorted[-1]], line_color=line_color, point_color=point_color)
         writer.write(frame)
         writer.release()
         print(f"Finished writing video to {out_path}")
@@ -386,11 +409,11 @@ def create_video_from_static_image_streamed(
                     alpha = j / gap
                     interp_pose = linear_interpolate_pose(prev_pose, pose, alpha)
                     frame_interp = ref_img.copy()
-                    draw_pose(frame_interp, interp_pose)
+                    draw_pose(frame_interp, interp_pose, line_color=line_color, point_color=point_color)
                     writer.write(frame_interp)
         # Write current frame
         frame = ref_img.copy()
-        draw_pose(frame, pose)
+        draw_pose(frame, pose, line_color=line_color, point_color=point_color)
         writer.write(frame)
         prev_frame_num = frame_num
         prev_pose = pose

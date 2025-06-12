@@ -35,7 +35,7 @@ def apply_transform(T, landmarks):
 
 # use the transformation matrix to draw the pose on the image at the 
 # correct coordinates
-def draw_pose(img, landmarks):
+def draw_pose(img, landmarks, line_color=(100, 255, 0), point_color=(0, 100, 255)):
     h, w = img.shape[:2]
     line_thickness = max(2, int(round(min(w, h) * 0.002)))
     circle_radius = max(2, int(round(min(w, h) * 0.004)))
@@ -52,10 +52,8 @@ def draw_pose(img, landmarks):
             pt1 = tuple(np.round(pt1).astype(int))
             pt2 = tuple(np.round(pt2).astype(int))
 
-            # Use a bright lime green for all lines
-            color = (100, 255, 0)  # BGR for bright lime green
             # Draw anti-aliased, thicker lines for sharpness
-            cv2.line(img, pt1, pt2, color, max(line_thickness, 4), lineType=cv2.LINE_AA)
+            cv2.line(img, pt1, pt2, line_color, max(line_thickness, 4), lineType=cv2.LINE_AA)
 
     for idx, pt in landmarks.items():
         # Ensure pt is (x, y)
@@ -63,7 +61,11 @@ def draw_pose(img, landmarks):
             continue
         pt = tuple(np.round(pt).astype(int))
 
-        # Use a bright blue for all points, and make them smaller
-        color = (0, 100, 255)  # BGR for bright blue
-        cv2.circle(img, pt, max(circle_radius // 2, 2), color, -1, lineType=cv2.LINE_AA)
+        # Make them smaller
+        cv2.circle(img, pt, max(circle_radius // 2, 2), point_color, -1, lineType=cv2.LINE_AA)
+
+def rgb_to_bgr(color):
+    if isinstance(color, (list, tuple)) and len(color) == 3:
+        return (color[2], color[1], color[0])
+    return color
 

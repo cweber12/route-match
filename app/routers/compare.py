@@ -17,7 +17,7 @@ from app.services.compare_pose import (
     VIDEO_OUT_DIR,
     linear_interpolate_pose
 )
-from app.services.draw_points import draw_pose
+from app.services.draw_points import draw_pose, rgb_to_bgr
 from app.utils.json_loader import load_json_from_path
 
 router = APIRouter()
@@ -46,6 +46,8 @@ async def compare_image(
     sift_down: float = Form(20.0),
     pose_lm_in: str = Form(""),
     sift_kp_in: str = Form(""),
+    line_color: str = Form("100,255,0"),
+    point_color: str = Form("0,100,255"),
 ):
     try:
         print("Starting compare_image route")
@@ -97,12 +99,24 @@ async def compare_image(
         print(f"All pose data keys after int conversion: {list(all_pose_data.keys())}")
         print(f"Total SIFT keypoints: {len(all_sift_keypoints)}, descriptors: {len(all_sift_descriptors)}")
 
+        # Parse color strings to tuples and convert to BGR
+        def parse_color(s):
+            return tuple(int(x) for x in s.split(","))
+        line_color_tuple = rgb_to_bgr(parse_color(line_color))
+        point_color_tuple = rgb_to_bgr(parse_color(point_color))
+
         print("Calling create_video_from_static_image(production mode)")
         create_video_from_static_image_streamed(
             image_path=temp_image_path,
             pose_landmarks=all_pose_data,
             stored_keypoints_all=all_sift_keypoints,
-            stored_descriptors_all=all_sift_descriptors
+            stored_descriptors_all=all_sift_descriptors,
+            sift_left=sift_left,
+            sift_right=sift_right,
+            sift_up=sift_up,
+            sift_down=sift_down,
+            line_color=line_color_tuple,
+            point_color=point_color_tuple
         )
         raw_path = os.path.join(VIDEO_OUT_DIR, "output_video.mp4")
         browser_ready = os.path.join(VIDEO_OUT_DIR, "output_video_browser.mp4")
