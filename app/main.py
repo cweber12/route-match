@@ -38,15 +38,16 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
+
+        "http://localhost:8080", 
+        "http://localhost:5173", # Vite local port 
         "http://localhost:5174",
+        "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
-        "http://3.17.191.244", 
-        "https://routemap-react-app.s3.us-east-2.amazonaws.com",
-        "http://routemap-react-app.s3-website.us-east-2.amazonaws.com",
-      
-        ],    
+        "https://route-scan.com",
+        "http://route-scan.com",
+        "http://localhost:3000",  # For local development
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

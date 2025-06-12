@@ -75,4 +75,19 @@ CMD ["uvicorn", "app_process.main:app", "--host", "0.0.0.0", "--port", "80"]
 
 _________________________________________________________________________-
 
-# Dockerfile (match)
+# ECR
+
+aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 537124934274.dkr.ecr.us-east-2.amazonaws.com
+
+docker tag route-map-match:latest 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+      
+docker push 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+
+# EC2 SSH
+
+sudo docker pull 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+
+aws ecr get-login-password --region us-east-2 | sudo docker login --username AWS --password-stdin 537124934274.dkr.ecr.us-east-2.amazonaws.com
+
+sudo docker pull 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+

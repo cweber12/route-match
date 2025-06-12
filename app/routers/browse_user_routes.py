@@ -275,3 +275,52 @@ def debug_list_s3_keys(
     print("DEBUG: S3 KEYS:", keys)
     return keys
 
+@router.get("/routes-under-area")
+def routes_under_area(user: str = Query(...), area_path: str = Query(...), bucket: str = Query("route-keypoints")):
+    # Load the user's location tree from S3
+    tree = load_or_build_tree(user, s3_client, bucket)
+    path_parts = [p for p in area_path.strip("/").split("/") if p]
+
+    # Traverse to the area node
+    def find_area_node(nodes, parts):
+        if not parts:
+            return nodes
+        for node in nodes:
+            if node["name"] == parts[0] and node["type"] == "area":
+                return find_area_node(node.get("children", []), parts[1:])
+        return []
+
+    area_nodes = find_area_node(tree, path_parts)
+
+    # Collect all routes (leaf nodes) under this area
+    def collect_routes(nodes):
+        routes = []
+        for node in nodes:
+            if node["type"] == "route":
+                # Fetch timestamps for this route
+                prefix = f"{user}/{area_path}/{node['name']}".replace('//', '/')
+                timestamps = []
+                try:
+                    paginator = s3_client.get_paginator("list_objects_v2")
+                    pages = paginator.paginate(Bucket=bucket, Prefix=prefix.rstrip("/") + "/")
+                    timestamp_folders = set()
+                    for page in pages:
+                        for obj in page.get("Contents", []):
+                            key = obj["Key"]
+                            rel = key[len(prefix.rstrip('/') + '/'):]
+                            parts = rel.split('/')
+                            if len(parts) > 1:
+                                folder = parts[0]
+                                if is_timestamp_folder(folder):
+                                    timestamp_folders.add(folder)
+                    timestamps = [{"name": t} for t in sorted(timestamp_folders)]
+                except Exception:
+                    timestamps = []
+                node_copy = node.copy()
+                node_copy["timestamps"] = timestamps
+                routes.append(node_copy)
+            elif node.get("children"):
+                routes.extend(collect_routes(node["children"]))
+        return routes
+
+    return collect_routes(area_nodes)

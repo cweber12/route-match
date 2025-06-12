@@ -11,9 +11,10 @@ import numpy as np
 from app.services.compare_pose import (
     load_pose_data_from_path,
     load_sift_data_from_path,
-    create_video_from_static_image_streamed,  # <-- this should handle interpolation
+    create_video_from_static_image,  
     convert_video_for_browser,
-    VIDEO_OUT_DIR
+    VIDEO_OUT_DIR,
+    linear_interpolate_pose
 )
 from app.services.draw_points import draw_pose
 from app.utils.json_loader import load_json_from_path
@@ -90,8 +91,8 @@ async def compare_image(
             all_pose_data = {int(k): v for k, v in all_pose_data.items()}
             print(f"Pose data keys after int conversion: {list(all_pose_data.keys())}")
 
-            print("Calling create_video_from_static_image_streamed (preview mode)")
-            create_video_from_static_image_streamed(
+            print("Calling create_video_from_static_image (preview mode)")
+            create_video_from_static_image(
                 image_path=temp_image_path,
                 pose_landmarks=all_pose_data,
                 stored_keypoints_all=all_sift_keypoints,
@@ -137,8 +138,8 @@ async def compare_image(
         print(f"All pose data keys after int conversion: {list(all_pose_data.keys())}")
         print(f"Total SIFT keypoints: {len(all_sift_keypoints)}, descriptors: {len(all_sift_descriptors)}")
 
-        print("Calling create_video_from_static_image_streamed (production mode)")
-        create_video_from_static_image_streamed(
+        print("Calling create_video_from_static_image(production mode)")
+        create_video_from_static_image(
             image_path=temp_image_path,
             pose_landmarks=all_pose_data,
             stored_keypoints_all=all_sift_keypoints,
@@ -237,39 +238,68 @@ async def compare_image_multi_skeleton(
                 sift_up=sift_up,
                 sift_down=sift_down
             )
-            if transformed_poses:
-                all_transformed_poses.append(transformed_poses)
-                all_frame_numbers.update(transformed_poses.keys())
-                print(f"Got {len(transformed_poses)} transformed frames for skeleton {i+1}")
+            if not transformed_poses or len(transformed_poses) == 0:
+                print(f"No valid transformed poses found for {key}")
+                continue
+
+            all_transformed_poses.append(transformed_poses)
+            all_frame_numbers.update(transformed_poses.keys())
+            print(f"Got {len(transformed_poses)} transformed frames for skeleton {i+1}")
 
         if not all_transformed_poses:
             raise HTTPException(500, "No valid transformed poses found")
 
+        # Interpolate missing frames for each skeleton
+        def interpolate_pose_dict(pose_dict, all_frames):
+            interp = {}
+            keys_sorted = sorted(pose_dict.keys())
+            for idx in range(len(keys_sorted) - 1):
+                f1, f2 = keys_sorted[idx], keys_sorted[idx + 1]
+                interp[f1] = pose_dict[f1]
+                gap = f2 - f1
+                if gap > 1:
+                    for j in range(1, gap):
+                        alpha = j / gap
+                        interp[f1 + j] = linear_interpolate_pose(pose_dict[f1], pose_dict[f2], alpha)
+            interp[keys_sorted[-1]] = pose_dict[keys_sorted[-1]]
+            # Fill in any missing frames (e.g., if frame numbers are not consecutive)
+            min_frame = min(all_frames)
+            max_frame = max(all_frames)
+            for frame_num in range(min_frame, max_frame + 1):
+                if frame_num not in interp:
+                    prev = max([k for k in interp if k < frame_num], default=None)
+                    nxt = min([k for k in interp if k > frame_num], default=None)
+                    if prev is not None and nxt is not None:
+                        alpha = (frame_num - prev) / (nxt - prev)
+                        interp[frame_num] = linear_interpolate_pose(interp[prev], interp[nxt], alpha)
+            return interp
+
+        # Interpolate all skeletons to cover all frames
+        all_frame_numbers = set()
+        for poses in all_transformed_poses:
+            all_frame_numbers.update(poses.keys())
+        all_frame_numbers = sorted(all_frame_numbers)
+        all_transformed_poses_interp = [interpolate_pose_dict(poses, all_frame_numbers) for poses in all_transformed_poses]
+
         # Create video by drawing all skeletons on each frame
         bg_img = cv2.imread(temp_image_path)
         height, width = bg_img.shape[:2]
-        
         VIDEO_OUT_DIR = os.path.join("temp_uploads", "pose_feature_data", "output_video")
         os.makedirs(VIDEO_OUT_DIR, exist_ok=True)
         out_path = os.path.join(VIDEO_OUT_DIR, "output_video_multi.mp4")
-        
         writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), 24, (width, height))
         if not writer.isOpened():
             raise HTTPException(500, f"Failed to open video writer for {out_path}")
 
-        # For each frame number, draw all available skeletons
-        for frame_num in sorted(all_frame_numbers):
+        # For each frame number, draw all available skeletons (now all have all frames)
+        for frame_num in all_frame_numbers:
             frame = bg_img.copy()
-            
-            # Draw each skeleton on this frame (earliest first, latest on top)
-            for transformed_poses in all_transformed_poses:
+            for transformed_poses in all_transformed_poses_interp:
                 if frame_num in transformed_poses:
                     draw_pose(frame, transformed_poses[frame_num])
-            
             writer.write(frame)
-        
         writer.release()
-        print(f"Created multi-skeleton video with {len(all_frame_numbers)} frames")
+        print(f"Created multi-skeleton video with {len(all_frame_numbers)} frames (all skeletons interpolated)")
 
         # Convert final video for browser
         browser_ready = os.path.join(VIDEO_OUT_DIR, "output_video_multi_browser.mp4")
@@ -290,6 +320,100 @@ async def compare_image_multi_skeleton(
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": "Failed to process multi-skeleton image."})
 
+@router.post("/compare-image-multi-cropped")
+async def compare_image_multi_cropped(
+    image: UploadFile = File(...),
+    s3_folders: List[str] = Form(...),
+    sift_left: float = Form(20.0),
+    sift_right: float = Form(20.0),
+    sift_up: float = Form(20.0),
+    sift_down: float = Form(20.0),
+):
+    """
+    For each S3 folder, generate a video of the climber, then concatenate all videos side by side.
+    """
+    import subprocess
+    print("Starting compare_image_multi_cropped route (side by side)")
+    os.makedirs("temp_uploads", exist_ok=True)
+    temp_image_path = os.path.join("temp_uploads", "compare_image_multi.jpg")
+    with open(temp_image_path, "wb") as buffer:
+        shutil.copyfileobj(image.file, buffer)
+    print(f"Saved uploaded image: {temp_image_path}")
+
+    video_paths = []
+    for i, folder in enumerate(sorted(s3_folders)):
+        key = folder.replace("s3://route-keypoints/", "").strip("/")
+        print(f"Processing folder {i+1}/{len(s3_folders)}: {key}")
+        pose_data = load_pose_data_from_path(key)
+        sift_kps, sift_descs = load_sift_data_from_path(key)
+        formatted_pose_data = {}
+        for frame, items in pose_data.items():
+            if isinstance(items, list) and len(items) > 0:
+                skeleton = items[0]
+                if isinstance(skeleton, dict):
+                    formatted_skeleton = {}
+                    for joint_id, coords in skeleton.items():
+                        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                            formatted_skeleton[joint_id] = {"x": float(coords[0]), "y": float(coords[1])}
+                        elif isinstance(coords, dict) and "x" in coords and "y" in coords:
+                            formatted_skeleton[joint_id] = {"x": float(coords["x"]), "y": float(coords["y"])}
+                    formatted_pose_data[int(frame)] = formatted_skeleton
+            elif isinstance(items, dict):
+                formatted_skeleton = {}
+                for joint_id, coords in items.items():
+                    if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                        formatted_skeleton[joint_id] = {"x": float(coords[0]), "y": float(coords[1])}
+                    elif isinstance(coords, dict) and "x" in coords and "y" in coords:
+                        formatted_skeleton[joint_id] = {"x": float(coords["x"]), "y": float(coords["y"])}
+                formatted_pose_data[int(frame)] = formatted_skeleton
+        if not formatted_pose_data:
+            print(f"No valid pose data found for {key}")
+            continue
+        print(f"formatted_pose_data keys for {key}: {list(formatted_pose_data.keys())}")
+        print(f"sift_kps length: {len(sift_kps)}, sift_descs length: {len(sift_descs)}")
+        # Generate video for this folder
+        video_out = os.path.join(VIDEO_OUT_DIR, f"output_video_{i+1}.mp4")
+        create_video_from_static_image(
+            image_path=temp_image_path,
+            pose_landmarks=formatted_pose_data,
+            stored_keypoints_all=sift_kps,
+            stored_descriptors_all=sift_descs,
+            output_video=os.path.basename(video_out)
+        )
+        if not os.path.exists(video_out):
+            print(f"Video file was not created: {video_out}")
+        else:
+            print(f"Video file created: {video_out}")
+        video_paths.append(video_out)
+    if not video_paths:
+        raise HTTPException(500, "No valid videos generated for any folder")
+    # Check that all video files exist before stacking
+    missing = [vp for vp in video_paths if not os.path.exists(vp)]
+    if missing:
+        print(f"Missing video files before ffmpeg hstack: {missing}")
+        raise HTTPException(500, f"Missing video files: {missing}")
+    # Attach videos side by side using ffmpeg hstack
+    if len(video_paths) == 1:
+        concat_out = video_paths[0]
+    else:
+        hstack_filter = f"hstack=inputs={len(video_paths)}"
+        concat_out = os.path.join(VIDEO_OUT_DIR, "output_video_multi_sidebyside.mp4")
+        hstack_cmd = [
+            "ffmpeg", "-y"
+        ]
+        for vp in video_paths:
+            hstack_cmd += ["-i", vp]
+        hstack_cmd += ["-filter_complex", hstack_filter, "-c:a", "copy", concat_out]
+        print("Stacking videos side by side:", " ".join(hstack_cmd))
+        subprocess.run(hstack_cmd, check=True)
+    # Convert for browser
+    browser_ready = os.path.join(VIDEO_OUT_DIR, "output_video_multi_sidebyside_browser.mp4")
+    convert_video_for_browser(concat_out, browser_ready)
+    print("Returning multi-sidebyside video response")
+    return JSONResponse({
+        "message": "Multi-sidebyside video created successfully.",
+        "video_url": "/static/pose_feature_data/output_video/output_video_multi_sidebyside_browser.mp4"
+    })
 
 def transform_poses_to_image(
     image_path,

@@ -67,42 +67,114 @@ def create_video_from_static_image(
 
     # Check if only one frame of SIFT data exists
     static_mode = len(stored_keypoints_all) == 1
-    print("Static SIFT mode:", static_mode)
 
     transformed = {}
     prev_T = None
     prev_query_indices = set()
     skipped_frames = 0
+    # static run flag ensures matching only once for static SIFT mode
+    static_run = True
 
+    
     frame_keys = sorted(pose_landmarks.keys())
-    for i, frame_num in enumerate(frame_keys):
-        if static_mode:
-            kp = stored_keypoints_all[0]
-            desc = stored_descriptors_all[0]
-        elif i < len(stored_keypoints_all):
-            kp = stored_keypoints_all[i]
-            desc = stored_descriptors_all[i]
-        else:
-            print(f"⚠ No matching SIFT keypoints for frame {frame_num}")
-            continue
-
+    # If static_mode, match and compute transform ONCE, then apply to all frames
+    if static_mode:
+  
+        kp = stored_keypoints_all[0]
+        desc = stored_descriptors_all[0]
         matches = match_features(
             desc, ref_desc,
-            prev_query_indices=prev_query_indices,
+            prev_query_indices=None,
             min_shared_matches=0,
             ratio_thresh=0.75,
             distance_thresh=300,
-            min_required_matches=10,
+            min_required_matches=5,
             top_n=150,
             debug=True
         )
-
         if not matches:
-            skipped_frames += 1
-            continue
+            print("No good matches found for static SIFT mode.")
+            return
+        # Always use all matches for affine transform in static mode
+        T = compute_affine_transform(
+            kp, ref_kp, matches,
+            prev_T=None,
+            alpha=0.0,  # No smoothing for static
+            debug=True
+        )
+        if T is None:
+            print("No transform found for static SIFT mode.")
+            return
+        # Build transformed dict
+        for frame_num in frame_keys:
+            transformed[frame_num] = apply_transform(T, pose_landmarks[frame_num])
+        # Interpolate between frames if there are gaps
+        interp_transformed = {}
+        frame_keys_sorted = sorted(transformed.keys())
+        for idx in range(len(frame_keys_sorted) - 1):
+            f1, f2 = frame_keys_sorted[idx], frame_keys_sorted[idx + 1]
+            interp_transformed[f1] = transformed[f1]
+            gap = f2 - f1
+            if gap > 1:
+                for j in range(1, gap):
+                    alpha = j / gap
+                    interp_transformed[f1 + j] = linear_interpolate_pose(transformed[f1], transformed[f2], alpha)
+        interp_transformed[frame_keys_sorted[-1]] = transformed[frame_keys_sorted[-1]]
+        # Fill in any missing frames (e.g., if frame numbers are not consecutive)
+        min_frame = frame_keys_sorted[0]
+        max_frame = frame_keys_sorted[-1]
+        for frame_num in range(min_frame, max_frame + 1):
+            if frame_num not in interp_transformed:
+                # If a frame is missing (e.g., skipped), interpolate between nearest previous and next
+                prev = max([k for k in interp_transformed if k < frame_num], default=None)
+                nxt = min([k for k in interp_transformed if k > frame_num], default=None)
+                if prev is not None and nxt is not None:
+                    alpha = (frame_num - prev) / (nxt - prev)
+                    interp_transformed[frame_num] = linear_interpolate_pose(interp_transformed[prev], interp_transformed[nxt], alpha)
+        # Sort by frame number
+        interp_transformed = dict(sorted(interp_transformed.items()))
+        # Write video and cleanup
+        write_pose_video(out_path, ref_img, interp_transformed)
+        if os.path.exists(POSE_JSON): os.remove(POSE_JSON)
+        if os.path.exists(SIFT_JSON): os.remove(SIFT_JSON)
+        print(f"Finished writing video to {out_path}")
+        print(f"Transformed frames: {len(interp_transformed)} (including interpolated)")
+        return
 
-        shared = [m for m in matches if m.queryIdx in prev_query_indices] if prev_query_indices else matches
-        use_matches = shared if len(shared) >= 5 else matches
+    # ...existing code for multi-frame SIFT...
+    for i, frame_num in enumerate(frame_keys):
+        
+        if static_run: 
+            if static_mode:
+                print("static-mode SIFT run")
+                kp = stored_keypoints_all[0]
+                desc = stored_descriptors_all[0]
+                static_run = False
+            elif i < len(stored_keypoints_all):
+                kp = stored_keypoints_all[i]
+                desc = stored_descriptors_all[i]
+            else:
+                print(f"⚠ No matching SIFT keypoints for frame {frame_num}")
+                continue
+
+
+            matches = match_features(
+                desc, ref_desc,
+                prev_query_indices=prev_query_indices,
+                min_shared_matches=0,
+                ratio_thresh=0.75,
+                distance_thresh=300,
+                min_required_matches=5,
+                top_n=150,
+                debug=True
+            )
+
+            if not matches:
+                skipped_frames += 1
+                continue
+
+            shared = [m for m in matches if m.queryIdx in prev_query_indices] if prev_query_indices else matches
+            use_matches = shared if len(shared) >= 5 else matches
 
         T = compute_affine_transform(
             kp, ref_kp, use_matches,
@@ -123,7 +195,33 @@ def create_video_from_static_image(
         print("Not enough transformed frames to generate video")
         return
 
-    write_pose_video(out_path, ref_img, transformed)
+    # Interpolate between frames if there are gaps
+    interp_transformed = {}
+    frame_keys_sorted = sorted(transformed.keys())
+    for idx in range(len(frame_keys_sorted) - 1):
+        f1, f2 = frame_keys_sorted[idx], frame_keys_sorted[idx + 1]
+        interp_transformed[f1] = transformed[f1]
+        gap = f2 - f1
+        if gap > 1:
+            for j in range(1, gap):
+                alpha = j / gap
+                interp_transformed[f1 + j] = linear_interpolate_pose(transformed[f1], transformed[f2], alpha)
+    interp_transformed[frame_keys_sorted[-1]] = transformed[frame_keys_sorted[-1]]
+    # Fill in any missing frames (e.g., if frame numbers are not consecutive)
+    min_frame = frame_keys_sorted[0]
+    max_frame = frame_keys_sorted[-1]
+    for frame_num in range(min_frame, max_frame + 1):
+        if frame_num not in interp_transformed:
+            # If a frame is missing (e.g., skipped), interpolate between nearest previous and next
+            prev = max([k for k in interp_transformed if k < frame_num], default=None)
+            nxt = min([k for k in interp_transformed if k > frame_num], default=None)
+            if prev is not None and nxt is not None:
+                alpha = (frame_num - prev) / (nxt - prev)
+                interp_transformed[frame_num] = linear_interpolate_pose(interp_transformed[prev], interp_transformed[nxt], alpha)
+    # Sort by frame number
+    interp_transformed = dict(sorted(interp_transformed.items()))
+    # Write video and cleanup
+    write_pose_video(out_path, ref_img, interp_transformed)
 
     if os.path.exists(POSE_JSON): os.remove(POSE_JSON)
     if os.path.exists(SIFT_JSON): os.remove(SIFT_JSON)
@@ -166,7 +264,6 @@ def create_video_from_static_image_streamed(
     )
 
     frame_keys = sorted([int(k) for k in pose_landmarks.keys()])
-    frame_keys_str = [str(k) for k in frame_keys]
     height, width = ref_img.shape[:2]
     writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), 24, (width, height))
     if not writer.isOpened():
@@ -177,25 +274,13 @@ def create_video_from_static_image_streamed(
     prev_query_indices = set()
     skipped_frames = 0
 
-    i = 0
-    while i < len(frame_keys):
-        frame_num = frame_keys[i]
-        frame_num_str = str(frame_num)
-        # Get SIFT data for this frame
-        if len(stored_keypoints_all) == 1:
-            kp = stored_keypoints_all[0]
-            desc = stored_descriptors_all[0]
-        elif i < len(stored_keypoints_all):
-            kp = stored_keypoints_all[i]
-            desc = stored_descriptors_all[i]
-        else:
-            print(f"⚠ No matching SIFT keypoints for frame {frame_num}")
-            i += 1
-            continue
-
+    # Optimization: If only one set of SIFT keypoints/descriptors, match once and reuse
+    if len(stored_keypoints_all) == 1:
+        kp = stored_keypoints_all[0]
+        desc = stored_descriptors_all[0]
         matches = match_features(
             desc, ref_desc,
-            prev_query_indices=prev_query_indices,
+            prev_query_indices=None,
             min_shared_matches=0,
             ratio_thresh=0.75,
             distance_thresh=300,
@@ -203,110 +288,34 @@ def create_video_from_static_image_streamed(
             top_n=150,
             debug=True
         )
-
         if not matches:
-            skipped_frames += 1
-            i += 1
-            continue
-
-        shared = [m for m in matches if m.queryIdx in prev_query_indices] if prev_query_indices else matches
-        use_matches = shared if len(shared) >= 5 else matches
-
+            print("No good matches found for static SIFT mode.")
+            return
         T = compute_affine_transform(
-            kp, ref_kp, use_matches,
-            prev_T=prev_T,
+            kp, ref_kp, matches,
+            prev_T=None,
             alpha=0.9,
             debug=True
         )
-
         if T is None:
-            skipped_frames += 1
-            i += 1
-            continue
+            print("No transform found for static SIFT mode.")
+            return
+        # Use the same transform for all frames
+        for frame_num in frame_keys:
+            transformed_pose = apply_transform(T, pose_landmarks[frame_num])
+            frame = ref_img.copy()
+            draw_pose(frame, transformed_pose)
+            writer.write(frame)
+        writer.release()
+        print(f"Finished writing video to {out_path}")
+        print(f"Processed frames: {len(frame_keys)}")
+        return
 
-        # Transform and draw for this frame only
-        if frame_num not in pose_landmarks:
-            print(f"Frame {frame_num} not found in pose_landmarks keys: {list(pose_landmarks.keys())}")
-            i += 1
-            continue
-        transformed_pose = apply_transform(T, pose_landmarks[frame_num])
-        frame = ref_img.copy()
-        draw_pose(frame, transformed_pose)
-        writer.write(frame)
-
-        # Interpolation logic
-        # Look ahead to next valid frame
-        j = i + 1
-        while j < len(frame_keys):
-            next_frame_num = frame_keys[j]
-            next_frame_num_str = str(next_frame_num)
-            # Try to get SIFT and pose for next frame
-            if len(stored_keypoints_all) == 1:
-                next_kp = stored_keypoints_all[0]
-                next_desc = stored_descriptors_all[0]
-            elif j < len(stored_keypoints_all):
-                next_kp = stored_keypoints_all[j]
-                next_desc = stored_descriptors_all[j]
-            else:
-                j += 1
-                continue
-
-            next_matches = match_features(
-                next_desc, ref_desc,
-                prev_query_indices=prev_query_indices,
-                min_shared_matches=0,
-                ratio_thresh=0.75,
-                distance_thresh=300,
-                min_required_matches=10,
-                top_n=150,
-                debug=True
-            )
-            # If not enough matches, try again with looser thresholds
-            if not next_matches or len(next_matches) < 10:
-                print("Retrying match_features with looser thresholds...")
-                next_matches = match_features(
-                    next_desc, ref_desc,
-                    prev_query_indices=prev_query_indices,
-                    min_shared_matches=0,
-                    ratio_thresh=0.85,
-                    distance_thresh=500,
-                    min_required_matches=3,
-                    top_n=200,
-                    debug=True
-                )
-
-            if not next_matches:
-                j += 1
-                continue
-
-            next_T = compute_affine_transform(
-                next_kp, ref_kp, next_matches,
-                prev_T=prev_T,
-                alpha=0.9,
-                debug=True
-            )
-
-            if next_T is None:
-                j += 1
-                continue
-
-            # If there is a gap, interpolate
-            gap = next_frame_num - frame_num
-            if gap > 1:
-                for interp_idx in range(1, gap):
-                    alpha = interp_idx / gap
-                    interp_pose = linear_interpolate_pose(
-                        apply_transform(T, pose_landmarks[frame_num]),
-                        apply_transform(next_T, pose_landmarks[next_frame_num]),
-                        alpha
-                    )
-                    interp_frame = ref_img.copy()
-                    draw_pose(interp_frame, interp_pose)
-                    writer.write(interp_frame)
-            break  # Only interpolate to the next valid frame
-        prev_T = T
-        prev_query_indices = set(m.queryIdx for m in use_matches)
-        i += 1
+    # ...existing code for multi-frame SIFT...
+    i = 0
+    while i < len(frame_keys):
+        frame_num = frame_keys[i]
+        # ...existing code...
 
     writer.release()
     print(f"Finished writing video to {out_path}")
