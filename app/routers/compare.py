@@ -8,8 +8,6 @@ import numpy as np
 
 from app.services.load_json_s3 import load_pose_data_from_path, load_sift_data_from_path
 from app.services.compare_pose import (
-    load_pose_data_from_path,
-    load_sift_data_from_path,
     create_video_from_static_image_streamed,  
     convert_video_for_browser,
     VIDEO_OUT_DIR,
