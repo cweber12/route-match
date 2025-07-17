@@ -2,6 +2,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 import warnings
+import os
 
 #import logging
 #logging.basicConfig(level=logging.DEBUG)
@@ -31,7 +32,8 @@ app = FastAPI(debug=True)
 async def _root():
     return {"status": "ok"}
 
-app.mount("/static", StaticFiles(directory="temp_uploads"), name="static")
+app.mount("/static", StaticFiles(directory=os.path.abspath("temp_uploads")), name="static")
+print("Serving static from:", os.path.abspath("temp_uploads"))
 
 # Middleware
 app.add_middleware(GZipMiddleware, minimum_size=500)

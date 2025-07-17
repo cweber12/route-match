@@ -26,11 +26,67 @@ RIGHT_LANDMARKS = set([
 # Function to compute the affine transformation matrix using matched 
 # SIFT keypoints. 
 def apply_transform(T, landmarks):
+    """Apply affine transformation to pose landmarks"""
+    if T is None:
+        print("Warning: Transform matrix is None, returning original landmarks")
+        return landmarks
+
+    # Log transformation matrix details
+    if T is not None:
+        print(f"Transformation matrix shape: {T.shape}, type: {type(T)}")
+
+    print(f"Transformation matrix: {T}")
+    print(f"Input landmarks: {landmarks}")
+
+    if not isinstance(landmarks, (list, tuple)):
+        print(f"Warning: landmarks is not a list/tuple, got {type(landmarks)}")
+        return landmarks
+
+    # Validate transformation matrix
+    def validate_transformation(transform):
+        if transform is None:
+            return False
+
+        # Extract rotation and scaling components
+        scale_x = np.sqrt(transform[0, 0]**2 + transform[0, 1]**2)
+        scale_y = np.sqrt(transform[1, 0]**2 + transform[1, 1]**2)
+        rotation_angle = np.arctan2(transform[1, 0], transform[0, 0])
+        rotation_degrees = np.degrees(rotation_angle)
+
+        # Check for reasonable scaling (between 0.3 and 3.0)
+        if scale_x < 0.3 or scale_x > 3.0 or scale_y < 0.3 or scale_y > 3.0:
+            print(f"Extreme scaling detected: X={scale_x:.3f}, Y={scale_y:.3f}")
+            return False
+
+        # Check for reasonable rotation (less than 15 degrees)
+        if abs(rotation_degrees) > 15:
+            print(f"Extreme rotation detected: {rotation_degrees:.1f} degrees")
+            return False
+
+        return True
+
+    if not validate_transformation(T):
+        print("Transformation matrix validation failed, returning original landmarks")
+        return landmarks
+
     transformed = {}
+    # Log each landmark before and after transformation
     for lm in landmarks:
-        pt = np.array([[lm["x"], lm["y"]]], dtype=np.float32)
-        new_pt = cv2.transform(pt[None, :, :], T)[0][0]
-        transformed[lm["landmark_number"]] = new_pt
+        if "x" in lm and "y" in lm:
+            print(f"Landmark before transform: x={lm['x']}, y={lm['y']}")
+            try:
+                x, y = float(lm["x"]), float(lm["y"])
+                pt = np.array([[x, y]], dtype=np.float32)
+
+                # Apply transformation
+                new_pt = cv2.transform(pt[None, :, :], T)[0][0]
+
+                print(f"Landmark after transform: x={new_pt[0]}, y={new_pt[1]}")
+            except Exception as e:
+                print(f"Error transforming landmark {lm}: {e}")
+                continue
+
+    print(f"Transformed landmarks: {transformed}")
     return transformed
 
 # use the transformation matrix to draw the pose on the image at the 

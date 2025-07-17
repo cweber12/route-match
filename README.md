@@ -22,7 +22,7 @@ STOP:                 docker stop route-map-match
 
 REMOVE:               docker rm route-map-match
 
-RUN:                  docker run --env-file .env -p 8080:80 --name route-map-match route-map-match
+RUN:                  docker run --env-file .env -p 8000:8000 --name route-map-match route-map-match
 
 LIST RUNNING:         docker ps
 

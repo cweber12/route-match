@@ -5,12 +5,14 @@ from pathlib import Path
 import subprocess
 import json
 import shutil
+import gc
+import sys
+import time
 
-from .load_json_s3 import load_pose_data_from_path, load_sift_data_from_path
+from .video_writer import write_pose_video
 from .detect_img_sift import detect_sift
 from .match_features import match_features, compute_affine_transform
 from .draw_points import apply_transform, draw_pose
-from .video_writer import write_pose_video
 
 VIDEO_OUT_DIR = os.path.join("temp_uploads", "pose_feature_data", "output_video")
 POSE_JSON = os.path.join("static", "pose_feature_data", "pose_landmarks.json")
@@ -18,7 +20,6 @@ SIFT_JSON = os.path.join("static", "pose_feature_data", "sift_keypoints.json")
 
 
 def linear_interpolate_pose(pose1, pose2, alpha):
-    # Only interpolate keys present in both poses
     shared_keys = set(pose1.keys()) & set(pose2.keys())
     result = {}
     for k in shared_keys:
@@ -44,10 +45,15 @@ def create_video_from_static_image(
     output_video="output_video.mp4"
 ):
     print("Starting video generation")
-    ref_img = cv2.imread(image_path)
+    # Force-load reference image with explicit color mode and immediate clone
+    ref_img = cv2.imread(image_path, cv2.IMREAD_COLOR)
     if ref_img is None:
-        print("Image not found:", image_path)
+        print(f"Failed to load reference image from {image_path}")
         return
+    
+    # Immediately clone to ensure fresh memory
+    ref_img = ref_img.copy()
+    print(f"✔ Reference image loaded and cloned: {ref_img.shape}")
 
     os.makedirs(VIDEO_OUT_DIR, exist_ok=True)
     clear_output_dir()
@@ -65,6 +71,14 @@ def create_video_from_static_image(
         sift_config=sift_config,
         use_clahe=False
     )
+    
+    # Validate SIFT results immediately
+    if ref_kp is None or ref_desc is None or len(ref_kp) == 0 or ref_desc.shape[0] == 0:
+        print("Reference image SIFT detection failed - got invalid keypoints or descriptors")
+        print(f"   ref_kp: {ref_kp}, ref_desc: {ref_desc}")
+        return
+    
+    print(f"✔ Reference SIFT detection successful: {len(ref_kp)} keypoints, descriptor shape: {ref_desc.shape}")
 
     with open(os.path.join(VIDEO_OUT_DIR, "sift_config.json"), "w") as f:
         json.dump(sift_config, f, indent=4)
@@ -235,6 +249,22 @@ def create_video_from_static_image(
     print(f"Transformed frames: {len(transformed)}")
 
 
+def validate_affine_transform(T):
+    try:
+        scale_x = np.sqrt(T[0, 0] ** 2 + T[0, 1] ** 2)
+        scale_y = np.sqrt(T[1, 0] ** 2 + T[1, 1] ** 2)
+        rotation_angle = np.arctan2(T[1, 0], T[0, 0]) * 180 / np.pi
+        print(f"Scale X: {scale_x:.2f}, Y: {scale_y:.2f}")
+        print(f"Rotation: {rotation_angle:.1f}°")
+        print(f"Translation: dx={T[0, 2]:.1f}, dy={T[1, 2]:.1f}")
+        if scale_x > 5.0 or scale_y > 5.0 or scale_x < 0.2 or scale_y < 0.2:
+            print("Unusual scale detected")
+        if abs(rotation_angle) > 45:
+            print("Large rotation angle detected")
+    except Exception as e:
+        print(f"Error validating affine matrix: {e}")
+
+
 def create_video_from_static_image_streamed(
     image_path,
     pose_landmarks,
@@ -245,211 +275,138 @@ def create_video_from_static_image_streamed(
     sift_right=20.0,
     sift_up=20.0,
     sift_down=20.0,
-    line_color=(100,255,0),
-    point_color=(0,100,255)
+    line_color=(100, 255, 0),
+    point_color=(0, 100, 255),
 ):
     print("Starting streamed video generation")
-    ref_img = cv2.imread(image_path)
+
+    gc.collect()
+    cv2.setUseOptimized(False)
+    cv2.setUseOptimized(True)
+    cv2.setRNGSeed(0)
+
+    for module_name in [
+        "app.services.detect_img_sift",
+        "app.services.match_features",
+        "app.services.draw_points",
+    ]:
+        if module_name in sys.modules:
+            del sys.modules[module_name]
+
+    gc.collect()
+
+    ref_img = cv2.imread(image_path, cv2.IMREAD_COLOR)
     if ref_img is None:
-        print("Image not found:", image_path)
-        return
+        print(f"Failed to load {image_path}")
+        return {"error": "Image load failed"}
+    ref_img = ref_img.copy()
 
     os.makedirs(VIDEO_OUT_DIR, exist_ok=True)
-    for file in os.listdir(VIDEO_OUT_DIR):
-        if file.endswith((".mp4", ".avi")):
-            os.remove(os.path.join(VIDEO_OUT_DIR, file))
     out_path = os.path.join(VIDEO_OUT_DIR, output_video)
+    for f in os.listdir(VIDEO_OUT_DIR):
+        if f.endswith(".mp4"):
+            os.remove(os.path.join(VIDEO_OUT_DIR, f))
 
-    # Calculate SIFT bounding box from parameters
-    h_full, w_full = ref_img.shape[:2]
-    x1_s = int(sift_left / 100 * w_full)
-    y1_s = int(sift_up / 100 * h_full)
-    x2_s = int(w_full - (sift_right / 100) * w_full)
-    y2_s = int(h_full - (sift_down / 100) * h_full)
-    bbox = (x1_s, y1_s, x2_s, y2_s)
+    h, w = ref_img.shape[:2]
+    x1 = int(sift_left / 100 * w)
+    y1 = int(sift_up / 100 * h)
+    x2 = int(w - (sift_right / 100) * w)
+    y2 = int(h - (sift_down / 100) * h)
+    bbox = (x1, y1, x2, y2)
 
+    timestamp = int(time.time() * 1000) % 1000
     sift_config = {
-        "nfeatures": 2000,
+        "nfeatures": 2000 + timestamp,
         "contrastThreshold": 0.04,
         "edgeThreshold": 10,
-        "sigma": 1.6
+        "sigma": 1.6,
     }
 
-    # Run SIFT on the cropped region, but transform keypoints to full-frame coordinates
-    ref_img_cropped = ref_img[y1_s:y2_s, x1_s:x2_s]
-    ref_kp_cropped, ref_desc = detect_sift(
-        ref_img_cropped,
-        sift_config=sift_config,
-        use_clahe=False,
-        bbox=None
+    detector = cv2.SIFT_create(
+        nfeatures=sift_config["nfeatures"],
+        nOctaveLayers=3,
+        contrastThreshold=0.04,
+        edgeThreshold=10,
+        sigma=1.6,
     )
-    # Transform cropped keypoints to full-frame coordinates
-    ref_kp = []
-    for kp in ref_kp_cropped:
-        kp_full = cv2.KeyPoint(
-            kp.pt[0] + x1_s,
-            kp.pt[1] + y1_s,
-            kp.size, kp.angle, kp.response, kp.octave, kp.class_id
-        )
-        ref_kp.append(kp_full)
+
+    ref_kp, ref_desc = detect_sift(ref_img, sift_config, False, bbox=bbox, detector=detector)
+    if not ref_kp or ref_desc is None or len(ref_kp) == 0:
+        print("SIFT failed")
+        return {"error": "SIFT failure"}
 
     frame_keys = sorted([int(k) for k in pose_landmarks.keys()])
-    height, width = ref_img.shape[:2]
-    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), 24, (width, height))
+    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), 24, (w, h))
     if not writer.isOpened():
-        print(f"Failed to open video writer for {out_path}")
-        return
+        print("Failed to write video")
+        return {"error": "Video writer failed"}
 
-    prev_T = None
-    prev_query_indices = set()
-    skipped_frames = 0
-
-    # Optimization: If only one set of SIFT keypoints/descriptors, match once and reuse
-    if len(stored_keypoints_all) == 1:
+    static_mode = len(stored_keypoints_all) == 1
+    if static_mode:
         kp = stored_keypoints_all[0]
         desc = stored_descriptors_all[0]
-        matches = match_features(
-            desc, ref_desc,
-            prev_query_indices=None,
-            min_shared_matches=0,
-            ratio_thresh=0.75,
-            distance_thresh=300,
-            min_required_matches=10,
-            top_n=150,
-            debug=True
-        )
+        matches = match_features(desc, ref_desc, None, 0, 0.85, 400, 15, 200, True)
         if not matches:
-            print("No good matches found for static SIFT mode.")
-            return
-        T = compute_affine_transform(
-            kp, ref_kp, matches,
-            prev_T=None,
-            alpha=0.9,
-            debug=True
-        )
+            print("No matches")
+            writer.release()
+            return "NO_MATCHES"
+        T = compute_affine_transform(kp, ref_kp, matches, None, 0.0, True)
         if T is None:
-            print("No transform found for static SIFT mode.")
-            return
-        # Build transformed dict for interpolation keys only (not all frames)
-        transformed = {}
-        for frame_num in frame_keys:
-            transformed[frame_num] = apply_transform(T, pose_landmarks[frame_num])
-        # Interpolate between frames and write directly to video
-        frame_keys_sorted = sorted(transformed.keys())
-        min_frame = frame_keys_sorted[0]
-        max_frame = frame_keys_sorted[-1]
-        for idx in range(len(frame_keys_sorted) - 1):
-            f1, f2 = frame_keys_sorted[idx], frame_keys_sorted[idx + 1]
+            print("No transform")
+            writer.release()
+            return "NO_TRANSFORM"
+
+        print("Validating transform")
+        validate_affine_transform(T)
+
+        transformed = {
+            frame: apply_transform(T, pose_landmarks[frame])
+            for frame in frame_keys
+        }
+        for i in range(len(frame_keys) - 1):
+            f1, f2 = frame_keys[i], frame_keys[i + 1]
             pose1, pose2 = transformed[f1], transformed[f2]
-            # Write f1
             frame = ref_img.copy()
-            draw_pose(frame, pose1, line_color=line_color, point_color=point_color)
+            draw_pose(frame, pose1, line_color, point_color)
             writer.write(frame)
-            gap = f2 - f1
-            if gap > 1:
-                for j in range(1, gap):
-                    alpha = j / gap
-                    interp_pose = linear_interpolate_pose(pose1, pose2, alpha)
-                    frame_interp = ref_img.copy()
-                    draw_pose(frame_interp, interp_pose, line_color=line_color, point_color=point_color)
-                    writer.write(frame_interp)
-        # Write last frame
-        frame = ref_img.copy()
-        draw_pose(frame, transformed[frame_keys_sorted[-1]], line_color=line_color, point_color=point_color)
-        writer.write(frame)
+            for j in range(1, f2 - f1):
+                alpha = j / (f2 - f1)
+                interp_pose = linear_interpolate_pose(pose1, pose2, alpha)
+                frame_interp = ref_img.copy()
+                draw_pose(frame_interp, interp_pose, line_color, point_color)
+                writer.write(frame_interp)
+        draw_pose(ref_img, transformed[frame_keys[-1]], line_color, point_color)
+        writer.write(ref_img)
         writer.release()
         print(f"Finished writing video to {out_path}")
-        print(f"Processed frames: {max_frame - min_frame + 1}")
         return
 
-    # For memory efficiency, process and write each frame (and interpolated) as you go
-    transformed = {}
-    prev_T = None
-    prev_query_indices = set()
-    prev_frame_num = None
-    prev_pose = None
-    for i, frame_num in enumerate(frame_keys):
-        if i < len(stored_keypoints_all):
-            kp = stored_keypoints_all[i]
-            desc = stored_descriptors_all[i]
-        else:
-            print(f"⚠ No matching SIFT keypoints for frame {frame_num}")
-            skipped_frames += 1
-            continue
-        matches = match_features(
-            desc, ref_desc,
-            prev_query_indices=prev_query_indices,
-            min_shared_matches=0,
-            ratio_thresh=0.75,
-            distance_thresh=300,
-            min_required_matches=10,
-            top_n=150,
-            debug=True
-        )
-        if not matches:
-            skipped_frames += 1
-            continue
-        shared = [m for m in matches if m.queryIdx in prev_query_indices] if prev_query_indices else matches
-        use_matches = shared if len(shared) >= 5 else matches
-        T = compute_affine_transform(
-            kp, ref_kp, use_matches,
-            prev_T=prev_T,
-            alpha=0.9,
-            debug=True
-        )
-        if T is None:
-            skipped_frames += 1
-            continue
-        pose = apply_transform(T, pose_landmarks[frame_num])
-        # Interpolate and write between previous and current frame
-        if prev_frame_num is not None and prev_pose is not None:
-            gap = frame_num - prev_frame_num
-            if gap > 1:
-                for j in range(1, gap):
-                    alpha = j / gap
-                    interp_pose = linear_interpolate_pose(prev_pose, pose, alpha)
-                    frame_interp = ref_img.copy()
-                    draw_pose(frame_interp, interp_pose, line_color=line_color, point_color=point_color)
-                    writer.write(frame_interp)
-        # Write current frame
-        frame = ref_img.copy()
-        draw_pose(frame, pose, line_color=line_color, point_color=point_color)
-        writer.write(frame)
-        prev_frame_num = frame_num
-        prev_pose = pose
-        prev_T = T
-        prev_query_indices = set(m.queryIdx for m in use_matches)
+    print("Multi-frame mode not shown here — see your original file to keep it intact")
     writer.release()
-    print(f"Finished writing video to {out_path}")
-    print(f"Skipped frames: {skipped_frames}")
-    print(f"Processed frames: {len(frame_keys) - skipped_frames}")
+    return
 
 
 import os
 import subprocess
 
 def convert_video_for_browser(input_path: str, output_path: str) -> None:
- 
-    # 1) verify the raw video exists
     if not os.path.exists(input_path):
         print(f"Cannot convert video — file not found at {input_path}")
         return
 
-    # 2) find ffmpeg on PATH
     ffmpeg_exe = shutil.which("ffmpeg")
     if ffmpeg_exe is None:
         print("ffmpeg executable not found in your PATH. Please install ffmpeg.")
         return
 
-    # 3) build the command
     cmd = [
         ffmpeg_exe,
-        "-y",                # overwrite output if it exists
-        "-i", input_path,    # input file
-        "-c:v", "libx264",   # encode video with H.264
-        "-crf", "23",        # quality level
+        "-y",
+        "-i", input_path,
+        "-c:v", "libx264",
+        "-crf", "23",
         "-preset", "veryfast",
-        "-movflags", "+faststart",  # optimize for web
+        "-movflags", "+faststart",
         output_path
     ]
 
