@@ -1,3 +1,27 @@
+# Call this function ONCE before any S3 downloads to clean up local storage
+def cleanup_local_storage():
+    print(f"[cleanup_local_storage] Cleaning up {LOCAL_STORAGE}")
+    try:
+        files_before = os.listdir(LOCAL_STORAGE)
+    except Exception as e:
+        print(f"[cleanup_local_storage] Exception listing LOCAL_STORAGE: {e}")
+        files_before = []
+    print(f"[cleanup_local_storage] Files in LOCAL_STORAGE before cleanup: {files_before}")
+    old_files = [f for f in files_before if f.startswith("pose_landmarks") or f.startswith("sift_keypoints")]
+    print(f"[cleanup_local_storage] Found old files to delete: {old_files}")
+    for old_file in old_files:
+        try:
+            file_path = os.path.join(LOCAL_STORAGE, old_file)
+            os.remove(file_path)
+            print(f"[cleanup_local_storage] Deleted old file: {file_path}")
+        except Exception as e:
+            print(f"[cleanup_local_storage] Failed to delete old file {file_path}: {e}")
+    try:
+        files_after = os.listdir(LOCAL_STORAGE)
+    except Exception as e:
+        print(f"[cleanup_local_storage] Exception listing LOCAL_STORAGE after cleanup: {e}")
+        files_after = []
+    print(f"[cleanup_local_storage] Files in LOCAL_STORAGE after cleanup: {files_after}")
 import os
 import json
 import cv2
@@ -56,30 +80,6 @@ def find_matching_file(s3_folder, prefix):
 def load_pose_data_from_path(s3_folder):
     print(f"[load_pose_data_from_path] ENTERED with s3_folder={s3_folder}")
     print(f"[load_pose_data_from_path] LOCAL_STORAGE: {LOCAL_STORAGE}")
-    try:
-        files_before = os.listdir(LOCAL_STORAGE)
-    except Exception as e:
-        print(f"[load_pose_data_from_path] Exception listing LOCAL_STORAGE: {e}")
-        files_before = []
-    print(f"[load_pose_data_from_path] Files in LOCAL_STORAGE before cleanup: {files_before}")
-
-    # Clear old pose and SIFT files before downloading new ones
-    old_files = [f for f in files_before if f.startswith("pose_landmarks") or f.startswith("sift_keypoints")]
-    print(f"[load_pose_data_from_path] Found old files to delete: {old_files}")
-    for old_file in old_files:
-        try:
-            file_path = os.path.join(LOCAL_STORAGE, old_file)
-            os.remove(file_path)
-            print(f"[load_pose_data_from_path] Deleted old file: {file_path}")
-        except Exception as e:
-            print(f"[load_pose_data_from_path] Failed to delete old file {file_path}: {e}")
-
-    try:
-        files_after = os.listdir(LOCAL_STORAGE)
-    except Exception as e:
-        print(f"[load_pose_data_from_path] Exception listing LOCAL_STORAGE after cleanup: {e}")
-        files_after = []
-    print(f"[load_pose_data_from_path] Files in LOCAL_STORAGE after cleanup: {files_after}")
 
     pose_json = os.path.join(LOCAL_STORAGE, f"pose_landmarks_{int(time.time())}_{os.urandom(4).hex()}.json")
     print(f"[load_pose_data_from_path] Generated unique local file path for pose JSON: {pose_json}")
@@ -99,7 +99,7 @@ def load_pose_data_from_path(s3_folder):
     with open(pose_json, "r") as f:
         try:
             data = json.load(f)
-            print(f"[load_pose_data_from_path] Downloaded pose file content: {data}")
+            print(f"[load_pose_data_from_path] Downloaded pose file content")
         except json.JSONDecodeError as e:
             print(f"[load_pose_data_from_path] Failed to parse JSON content: {e}")
             raise ValueError(f"Failed to parse JSON content from {pose_json}: {e}")
@@ -115,30 +115,6 @@ def load_pose_data_from_path(s3_folder):
 def load_sift_data_from_path(s3_folder):
     print(f"[load_sift_data_from_path] ENTERED with s3_folder={s3_folder}")
     print(f"[load_sift_data_from_path] LOCAL_STORAGE: {LOCAL_STORAGE}")
-    try:
-        files_before = os.listdir(LOCAL_STORAGE)
-    except Exception as e:
-        print(f"[load_sift_data_from_path] Exception listing LOCAL_STORAGE: {e}")
-        files_before = []
-    print(f"[load_sift_data_from_path] Files in LOCAL_STORAGE before cleanup: {files_before}")
-
-    # Clear old pose and SIFT files before downloading new ones
-    old_files = [f for f in files_before if f.startswith("pose_landmarks") or f.startswith("sift_keypoints")]
-    print(f"[load_sift_data_from_path] Found old files to delete: {old_files}")
-    for old_file in old_files:
-        try:
-            file_path = os.path.join(LOCAL_STORAGE, old_file)
-            os.remove(file_path)
-            print(f"[load_sift_data_from_path] Deleted old file: {file_path}")
-        except Exception as e:
-            print(f"[load_sift_data_from_path] Failed to delete old file {file_path}: {e}")
-
-    try:
-        files_after = os.listdir(LOCAL_STORAGE)
-    except Exception as e:
-        print(f"[load_sift_data_from_path] Exception listing LOCAL_STORAGE after cleanup: {e}")
-        files_after = []
-    print(f"[load_sift_data_from_path] Files in LOCAL_STORAGE after cleanup: {files_after}")
 
     sift_json = os.path.join(LOCAL_STORAGE, f"sift_keypoints_{int(time.time())}_{os.urandom(4).hex()}.json")
     print(f"[load_sift_data_from_path] Generated unique local file path for SIFT JSON: {sift_json}")
@@ -158,7 +134,7 @@ def load_sift_data_from_path(s3_folder):
     with open(sift_json, "r") as f:
         try:
             raw_data = json.load(f)
-            print(f"[load_sift_data_from_path] Downloaded SIFT file content: {raw_data}")
+            print(f"[load_sift_data_from_path] Downloaded SIFT file content")
         except json.JSONDecodeError as e:
             print(f"[load_sift_data_from_path] Failed to parse JSON content: {e}")
             raise ValueError(f"Failed to parse JSON content from {sift_json}: {e}")

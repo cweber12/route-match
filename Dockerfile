@@ -1,8 +1,8 @@
 ################################################################################
 # Stage 1 — builder: install Python deps & build wheels on Alpine
 ################################################################################
-FROM python:3.11-alpine AS builder
 
+FROM python:3.11-alpine AS builder
 # Install build dependencies
 RUN apk add --no-cache \
     build-base \
@@ -21,11 +21,11 @@ RUN apk add --no-cache \
     pkgconfig
 
 WORKDIR /tmp/app
-
-COPY requirements.txt .
+# Copy only requirements.txt first to leverage Docker cache for dependencies
+COPY requirements.txt ./
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
-
+# Now copy the rest of the application code (this layer will always rebuild if code changes)
 COPY . .
 
 ################################################################################
@@ -52,6 +52,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY --from=builder /usr/local /usr/local
 
 WORKDIR /app
+# Copy only the application code from builder (this will always be fresh)
 COPY --from=builder /tmp/app /app
 
 RUN mkdir -p /app/temp_uploads

@@ -36,48 +36,60 @@ def match_features(
     debug=False
 ):
     
+
+    # Set default values for None parameters
+    if ratio_thresh is None:
+        ratio_thresh = 0.75
+    if distance_thresh is None:
+        distance_thresh = 500.0
+    if top_n is not None:
+        top_n = int(top_n)
+
     # Force garbage collection before creating matcher
     import gc
     import time
     import sys
-    
+
     # Clear any numpy/OpenCV caches
     gc.collect()
-    
+
     # Clear OpenCV state
     cv2.setUseOptimized(False)
     cv2.setUseOptimized(True)
-    
+
     # Add randomness to prevent any caching
     timestamp = int(time.time() * 1000000) % 1000000
-    
+
     # Create a fresh BFMatcher for each call with unique seed
     cv2.setRNGSeed(timestamp)
     bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
-    
+
     if debug:
         print(f"Created fresh BFMatcher with seed: {timestamp}")
-    
-    # Additional safety: ensure descriptors are valid
+
+    # Defensive: ensure descriptors are valid
     if desc1 is None or desc2 is None:
         if debug:
-            print("One or both descriptors are None, returning empty matches")
+            print("[match_features] One or both descriptors are None, returning empty matches")
         return []
-    
+    if not hasattr(desc1, 'shape') or not hasattr(desc2, 'shape'):
+        if debug:
+            print("[match_features] One or both descriptors missing shape attribute, returning empty matches")
+        return []
     if len(desc1) == 0 or len(desc2) == 0:
         if debug:
-            print("One or both descriptors are empty, returning empty matches")
+            print("[match_features] One or both descriptors are empty, returning empty matches")
         return []
-    
+
     # Additional check for descriptor types and shapes
     if desc1.dtype != np.float32:
         desc1 = desc1.astype(np.float32)
     if desc2.dtype != np.float32:
         desc2 = desc2.astype(np.float32)
-    
+
     if debug:
         print(f"Matching descriptors: desc1 shape {desc1.shape}, desc2 shape {desc2.shape}")
-    
+
     try:
         matches = bf.knnMatch(desc1, desc2, k=2)
     except Exception as e:
@@ -91,6 +103,12 @@ def match_features(
     if debug:
         print(f"Got {len(matches)} raw matches, {len(valid_matches)} valid matches")
     
+    # Debug: print first 10 match distances before filtering
+    if debug and len(valid_matches) > 0:
+        print("First 10 match distances (m.distance, n.distance):")
+        for i, (m, n) in enumerate(valid_matches[:10]):
+            print(f"  Match {i}: m.distance={m.distance:.4f}, n.distance={n.distance:.4f}")
+
     good = []
     for m, n in valid_matches:
         # More stringent ratio test for better quality matches

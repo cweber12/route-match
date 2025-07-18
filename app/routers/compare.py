@@ -96,27 +96,27 @@ async def compare_image(
     line_color: str = Form("100,255,0"),
     point_color: str = Form("0,100,255"),
 ):
-
+    import uuid
+    temp_image_path = None
     try:
-        print("Starting compare_image route")
-        # Robust temp image handling
-        temp_dir = "temp_uploads"
-        # Clean temp directory before use
-        if os.path.exists(temp_dir):
-            for filename in os.listdir(temp_dir):
-                file_path = os.path.join(temp_dir, filename)
-                try:
-                    if os.path.isfile(file_path):
-                        os.remove(file_path)
-                        print(f"Deleted temp file before request: {file_path}")
-                    elif os.path.isdir(file_path):
-                        shutil.rmtree(file_path)
-                        print(f"Deleted temp directory before request: {file_path}")
-                except Exception as e:
-                    print(f"Failed to delete {file_path}: {e}")
-        os.makedirs(temp_dir, exist_ok=True)
-        import uuid
-        temp_image_path = os.path.join(temp_dir, f"compare_image_{uuid.uuid4().hex}.jpg")
+        # Save uploaded image to a unique temp file if provided
+        if image is not None:
+            ext = os.path.splitext(image.filename)[1] if image.filename else ".jpg"
+            temp_image_path = os.path.join("temp_uploads", f"compare_image_{uuid.uuid4().hex}{ext}")
+            with open(temp_image_path, "wb") as buffer:
+                image.file.seek(0)
+                shutil.copyfileobj(image.file, buffer)
+                buffer.flush()
+                os.fsync(buffer.fileno())
+            print(f"Saved uploaded image: {temp_image_path}")
+        elif built_in_image:
+            # Use built-in image path logic here if needed
+            temp_image_path = built_in_image  # Or however you resolve built-in images
+        else:
+            raise HTTPException(400, "No image provided.")
+
+
+        print("Production mode: loading from S3 folders")
 
         # Save image to temp file, always flush and close
         if built_in_image:
@@ -155,20 +155,13 @@ async def compare_image(
                 if file_size == 0:
                     print(f"Static image file is empty: {temp_image_path}")
                     raise HTTPException(500, "Static image file is empty.")
-        elif image is not None and getattr(image, "filename", None):
-            if image.filename:
-                with open(temp_image_path, "wb") as buffer:
-                    shutil.copyfileobj(image.file, buffer)
-                    buffer.flush()
-                    os.fsync(buffer.fileno())
-                print(f"Saved uploaded image: {temp_image_path}")
-                file_size = os.path.getsize(temp_image_path)
-                print(f"Uploaded image file size: {file_size} bytes")
-                if file_size == 0:
-                    print(f"Uploaded image file is empty: {temp_image_path}")
-                    raise HTTPException(500, "Uploaded image file is empty.")
-            else:
-                raise HTTPException(400, "No image provided.")
+        elif image is not None:
+            # Already saved uploaded image above, just check file size
+            file_size = os.path.getsize(temp_image_path)
+            print(f"Uploaded image file size: {file_size} bytes")
+            if file_size == 0:
+                print(f"Uploaded image file is empty: {temp_image_path}")
+                raise HTTPException(500, "Uploaded image file is empty.")
         else:
             raise HTTPException(400, "No image provided.")
 
@@ -219,15 +212,12 @@ async def compare_image(
                 all_pose_data.setdefault(frame, []).extend(items)
             all_sift_keypoints.extend(sift_kps)
             all_sift_descriptors.extend(sift_descs)
-
-        print(f"All pose data keys before int conversion: {list(all_pose_data.keys())}")
         try:
             all_pose_data = {int(k): v for k, v in all_pose_data.items()}
         except Exception as e:
             print(f"Error converting pose data keys to int: {e}")
             import traceback
             traceback.print_exc()
-        print(f"All pose data keys after int conversion: {list(all_pose_data.keys())}")
         print(f"Total SIFT keypoints: {len(all_sift_keypoints)}, descriptors: {len(all_sift_descriptors)}")
 
         def parse_color(s):

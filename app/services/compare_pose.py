@@ -1,3 +1,4 @@
+from .load_json_s3 import cleanup_local_storage
 import os
 import cv2
 import numpy as np
@@ -101,13 +102,14 @@ def create_video_from_static_image(
         kp = stored_keypoints_all[0]
         desc = stored_descriptors_all[0]
         matches = match_features(
-            desc, ref_desc,
-            prev_query_indices=None,
-            min_shared_matches=0,
+            desc1=desc,
+            desc2=ref_desc,
             ratio_thresh=0.75,
             distance_thresh=300,
-            min_required_matches=5,
             top_n=150,
+            min_required_matches=5,
+            prev_query_indices=None,
+            min_shared_matches=0,
             debug=True
         )
         if not matches:
@@ -117,7 +119,11 @@ def create_video_from_static_image(
         T = compute_affine_transform(
             kp, ref_kp, matches,
             prev_T=None,
+            ransac_thresh=1.0,
+            max_iters=5000,
+            confidence=0.999,
             alpha=0.0,  # No smoothing for static
+            min_required_matches=3,
             debug=True
         )
         if T is None:
@@ -177,13 +183,14 @@ def create_video_from_static_image(
 
 
             matches = match_features(
-                desc, ref_desc,
-                prev_query_indices=prev_query_indices,
-                min_shared_matches=0,
+                desc1=desc,
+                desc2=ref_desc,
                 ratio_thresh=0.75,
                 distance_thresh=300,
-                min_required_matches=5,
                 top_n=150,
+                min_required_matches=5,
+                prev_query_indices=prev_query_indices,
+                min_shared_matches=0,
                 debug=True
             )
 
@@ -197,7 +204,11 @@ def create_video_from_static_image(
         T = compute_affine_transform(
             kp, ref_kp, use_matches,
             prev_T=prev_T,
+            ransac_thresh=1.0,
+            max_iters=5000,
+            confidence=0.999,
             alpha=0.9,
+            min_required_matches=3,
             debug=True
         )
 
@@ -278,6 +289,10 @@ def create_video_from_static_image_streamed(
     line_color=(100, 255, 0),
     point_color=(0, 100, 255),
 ):
+
+    # Clean up local storage ONCE before any S3 downloads
+    from .load_json_s3 import cleanup_local_storage
+    cleanup_local_storage()
     print("Starting streamed video generation")
 
     gc.collect()
@@ -345,12 +360,31 @@ def create_video_from_static_image_streamed(
     if static_mode:
         kp = stored_keypoints_all[0]
         desc = stored_descriptors_all[0]
-        matches = match_features(desc, ref_desc, None, 0, 0.85, 400, 15, 200, True)
+        matches = match_features(
+            desc1=desc,
+            desc2=ref_desc,
+            ratio_thresh=0.85,
+            distance_thresh=400,
+            top_n=200,
+            min_required_matches=15,
+            prev_query_indices=None,
+            min_shared_matches=0,
+            debug=True
+        )
         if not matches:
             print("No matches")
             writer.release()
             return "NO_MATCHES"
-        T = compute_affine_transform(kp, ref_kp, matches, None, 0.0, True)
+        T = compute_affine_transform(
+            kp, ref_kp, matches,
+            prev_T=None,
+            ransac_thresh=1.0,
+            max_iters=5000,
+            confidence=0.999,
+            alpha=0.0,
+            min_required_matches=3,
+            debug=True
+        )
         if T is None:
             print("No transform")
             writer.release()

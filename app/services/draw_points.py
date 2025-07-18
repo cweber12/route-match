@@ -35,9 +35,6 @@ def apply_transform(T, landmarks):
     if T is not None:
         print(f"Transformation matrix shape: {T.shape}, type: {type(T)}")
 
-    print(f"Transformation matrix: {T}")
-    print(f"Input landmarks: {landmarks}")
-
     if not isinstance(landmarks, (list, tuple)):
         print(f"Warning: landmarks is not a list/tuple, got {type(landmarks)}")
         return landmarks
@@ -73,19 +70,18 @@ def apply_transform(T, landmarks):
     # Log each landmark before and after transformation
     for lm in landmarks:
         if "x" in lm and "y" in lm:
-            print(f"Landmark before transform: x={lm['x']}, y={lm['y']}")
+            idx = lm.get("landmark_number") or lm.get("index") or lm.get("id")
+            if idx is None:
+                continue
             try:
                 x, y = float(lm["x"]), float(lm["y"])
                 pt = np.array([[x, y]], dtype=np.float32)
-
                 # Apply transformation
                 new_pt = cv2.transform(pt[None, :, :], T)[0][0]
-
-                print(f"Landmark after transform: x={new_pt[0]}, y={new_pt[1]}")
+                transformed[int(idx)] = (float(new_pt[0]), float(new_pt[1]))
             except Exception as e:
                 print(f"Error transforming landmark {lm}: {e}")
                 continue
-
     print(f"Transformed landmarks: {transformed}")
     return transformed
 
