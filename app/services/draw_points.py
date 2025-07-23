@@ -32,8 +32,8 @@ def apply_transform(T, landmarks):
         return landmarks
 
     # Log transformation matrix details
-    if T is not None:
-        print(f"Transformation matrix shape: {T.shape}, type: {type(T)}")
+    #if T is not None:
+        #print(f"Transformation matrix shape: {T.shape}, type: {type(T)}")
 
     if not isinstance(landmarks, (list, tuple)):
         print(f"Warning: landmarks is not a list/tuple, got {type(landmarks)}")
@@ -82,7 +82,6 @@ def apply_transform(T, landmarks):
             except Exception as e:
                 print(f"Error transforming landmark {lm}: {e}")
                 continue
-    print(f"Transformed landmarks: {transformed}")
     return transformed
 
 # use the transformation matrix to draw the pose on the image at the 

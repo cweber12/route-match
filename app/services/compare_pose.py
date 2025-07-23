@@ -1,4 +1,11 @@
-from .load_json_s3 import cleanup_local_storage
+# compare_pose.py
+# ---------------------------------------------------------------------------
+# This file contains functions that use matched SIFT data to create a 
+# transformation matrix that is applied to stored pose landmark coordinates. 
+# Linear interpolation is used to fill in gaps between saved frames for 
+# smoother transitions. 
+# ---------------------------------------------------------------------------
+
 import os
 import cv2
 import numpy as np
@@ -45,7 +52,6 @@ def create_video_from_static_image(
     stored_descriptors_all,
     output_video="output_video.mp4"
 ):
-    print("Starting video generation")
     # Force-load reference image with explicit color mode and immediate clone
     ref_img = cv2.imread(image_path, cv2.IMREAD_COLOR)
     if ref_img is None:
@@ -54,8 +60,6 @@ def create_video_from_static_image(
     
     # Immediately clone to ensure fresh memory
     ref_img = ref_img.copy()
-    print(f"✔ Reference image loaded and cloned: {ref_img.shape}")
-
     os.makedirs(VIDEO_OUT_DIR, exist_ok=True)
     clear_output_dir()
     out_path = os.path.join(VIDEO_OUT_DIR, output_video)
@@ -76,11 +80,8 @@ def create_video_from_static_image(
     # Validate SIFT results immediately
     if ref_kp is None or ref_desc is None or len(ref_kp) == 0 or ref_desc.shape[0] == 0:
         print("Reference image SIFT detection failed - got invalid keypoints or descriptors")
-        print(f"   ref_kp: {ref_kp}, ref_desc: {ref_desc}")
         return
     
-    print(f"✔ Reference SIFT detection successful: {len(ref_kp)} keypoints, descriptor shape: {ref_desc.shape}")
-
     with open(os.path.join(VIDEO_OUT_DIR, "sift_config.json"), "w") as f:
         json.dump(sift_config, f, indent=4)
 
@@ -91,8 +92,6 @@ def create_video_from_static_image(
     prev_T = None
     prev_query_indices = set()
     skipped_frames = 0
-    # static run flag ensures matching only once for static SIFT mode
-    static_run = True
 
     
     frame_keys = sorted(pose_landmarks.keys())
@@ -161,45 +160,35 @@ def create_video_from_static_image(
         write_pose_video(out_path, ref_img, interp_transformed)
         if os.path.exists(POSE_JSON): os.remove(POSE_JSON)
         if os.path.exists(SIFT_JSON): os.remove(SIFT_JSON)
-        print(f"Finished writing video to {out_path}")
-        print(f"Transformed frames: {len(interp_transformed)} (including interpolated)")
         return
 
-    # ...existing code for multi-frame SIFT...
     for i, frame_num in enumerate(frame_keys):
-        
-        if static_run: 
-            if static_mode:
-                print("static-mode SIFT run")
-                kp = stored_keypoints_all[0]
-                desc = stored_descriptors_all[0]
-                static_run = False
-            elif i < len(stored_keypoints_all):
-                kp = stored_keypoints_all[i]
-                desc = stored_descriptors_all[i]
-            else:
-                print(f"⚠ No matching SIFT keypoints for frame {frame_num}")
-                continue
+        # Multi-frame mode: use different SIFT data for each frame
+        if i < len(stored_keypoints_all):
+            kp = stored_keypoints_all[i]
+            desc = stored_descriptors_all[i]
+        else:
+            print(f"No matching SIFT keypoints for frame {frame_num}")
+            continue
 
+        matches = match_features(
+            desc1=desc,
+            desc2=ref_desc,
+            ratio_thresh=0.75,
+            distance_thresh=300,
+            top_n=150,
+            min_required_matches=5,
+            prev_query_indices=prev_query_indices,
+            min_shared_matches=0,
+            debug=True
+        )
 
-            matches = match_features(
-                desc1=desc,
-                desc2=ref_desc,
-                ratio_thresh=0.75,
-                distance_thresh=300,
-                top_n=150,
-                min_required_matches=5,
-                prev_query_indices=prev_query_indices,
-                min_shared_matches=0,
-                debug=True
-            )
+        if not matches:
+            skipped_frames += 1
+            continue
 
-            if not matches:
-                skipped_frames += 1
-                continue
-
-            shared = [m for m in matches if m.queryIdx in prev_query_indices] if prev_query_indices else matches
-            use_matches = shared if len(shared) >= 5 else matches
+        shared = [m for m in matches if m.queryIdx in prev_query_indices] if prev_query_indices else matches
+        use_matches = shared if len(shared) >= 5 else matches
 
         T = compute_affine_transform(
             kp, ref_kp, use_matches,
@@ -265,9 +254,6 @@ def validate_affine_transform(T):
         scale_x = np.sqrt(T[0, 0] ** 2 + T[0, 1] ** 2)
         scale_y = np.sqrt(T[1, 0] ** 2 + T[1, 1] ** 2)
         rotation_angle = np.arctan2(T[1, 0], T[0, 0]) * 180 / np.pi
-        print(f"Scale X: {scale_x:.2f}, Y: {scale_y:.2f}")
-        print(f"Rotation: {rotation_angle:.1f}°")
-        print(f"Translation: dx={T[0, 2]:.1f}, dy={T[1, 2]:.1f}")
         if scale_x > 5.0 or scale_y > 5.0 or scale_x < 0.2 or scale_y < 0.2:
             print("Unusual scale detected")
         if abs(rotation_angle) > 45:
@@ -293,7 +279,7 @@ def create_video_from_static_image_streamed(
     # Clean up local storage ONCE before any S3 downloads
     from .load_json_s3 import cleanup_local_storage
     cleanup_local_storage()
-    print("Starting streamed video generation")
+    print("Starting video generation")
 
     gc.collect()
     cv2.setUseOptimized(False)
@@ -415,7 +401,6 @@ def create_video_from_static_image_streamed(
         print(f"Finished writing video to {out_path}")
         return
 
-    print("Multi-frame mode not shown here — see your original file to keep it intact")
     writer.release()
     return
 
@@ -444,7 +429,6 @@ def convert_video_for_browser(input_path: str, output_path: str) -> None:
         output_path
     ]
 
-    print("Converting with FFmpeg:", " ".join(cmd))
     try:
         subprocess.run(cmd, check=True)
         print(f"Successfully created browser‑friendly video at {output_path}")
