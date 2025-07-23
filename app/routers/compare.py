@@ -16,9 +16,9 @@ from app.services.draw_points import rgb_to_bgr
 
 router = APIRouter()
 
+# Health check for filesystem access
 @router.get("/health-check-fs")
 async def health_check_fs():
-    import tempfile
     import stat
     import gc
     results = {}
@@ -55,8 +55,8 @@ async def health_check_fs():
                 results[dir_path]["delete"] = f"ERROR: {e}"
         except Exception as e:
             results[dir_path]["error"] = str(e)
-    # Try to force garbage collection
-    try:
+    
+    try: # Try to force garbage collection
         gc.collect()
         results["gc"] = "collected"
     except Exception as e:
@@ -64,24 +64,26 @@ async def health_check_fs():
     # Log results
     print("HEALTH CHECK FS RESULTS:", results)
     return JSONResponse(results)
-# app/api/compare_image.py
 
 router = APIRouter()
 
+# Ensure all keypoints are valid (x, y) tuples, skip invalid ones
 def sanitize_skeleton(skeleton):
-    """Ensure all keypoints are valid (x, y) tuples, skip invalid ones"""
     sanitized = {}
     for k, pt in skeleton.items():
         if isinstance(pt, (list, tuple, np.ndarray)) and len(pt) >= 2:
             try:
+                # Ensure pt is iterable and has at least 2 elements
                 x, y = pt[0], pt[1]
                 if isinstance(x, (int, float, np.integer, np.floating)) and isinstance(y, (int, float, np.integer, np.floating)):
                     sanitized[k] = (int(x), int(y))
             except (TypeError, ValueError):
                 pass  # Skip invalid keypoints
-        # Skip scalar values entirely - don't create fake coordinates
+    
+    # Return verified coordinates
     return sanitized
 
+# Receives an image w/ defined SIFT bbox from the client
 @router.post("/compare-image")
 async def compare_image(
     image: UploadFile = File(None),
@@ -114,9 +116,6 @@ async def compare_image(
             temp_image_path = built_in_image  # Or however you resolve built-in images
         else:
             raise HTTPException(400, "No image provided.")
-
-
-        print("Production mode: loading from S3 folders")
 
         # Save image to temp file, always flush and close
         if built_in_image:
@@ -240,7 +239,6 @@ async def compare_image(
                 except Exception as e:
                     print(f"Failed to delete old output video: {out_file}", e)
 
-        print("Calling create_video_from_static_image(production mode)")
         # Clear any potential SIFT caches to prevent stale data between requests
         import gc
         gc.collect()
@@ -335,102 +333,6 @@ async def compare_image(
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": "Failed to process image."})
 
-
-@router.post("/compare-image-multi-cropped")
-async def compare_image_multi_cropped(
-    image: UploadFile = File(...),
-    s3_folders: List[str] = Form(...),
-    sift_left: float = Form(20.0),
-    sift_right: float = Form(20.0),
-    sift_up: float = Form(20.0),
-    sift_down: float = Form(20.0),
-):
-    """
-    For each S3 folder, generate a video of the climber, then concatenate all videos side by side.
-    """
-    import subprocess
-    print("Starting compare_image_multi_cropped route (side by side)")
-    os.makedirs("temp_uploads", exist_ok=True)
-    temp_image_path = os.path.join("temp_uploads", "compare_image_multi.jpg")
-    with open(temp_image_path, "wb") as buffer:
-        shutil.copyfileobj(image.file, buffer)
-    print(f"Saved uploaded image: {temp_image_path}")
-
-    video_paths = []
-    for i, folder in enumerate(sorted(s3_folders)):
-        key = folder.replace("s3://route-keypoints/", "").strip("/")
-        print(f"Processing folder {i+1}/{len(s3_folders)}: {key}")
-        pose_data = load_pose_data_from_path(key)
-        sift_kps, sift_descs = load_sift_data_from_path(key)
-        formatted_pose_data = {}
-        for frame, items in pose_data.items():
-            if isinstance(items, list) and len(items) > 0:
-                skeleton = items[0]
-                if isinstance(skeleton, dict):
-                    formatted_skeleton = {}
-                    for joint_id, coords in skeleton.items():
-                        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                            formatted_skeleton[joint_id] = {"x": float(coords[0]), "y": float(coords[1])}
-                        elif isinstance(coords, dict) and "x" in coords and "y" in coords:
-                            formatted_skeleton[joint_id] = {"x": float(coords["x"]), "y": float(coords["y"])}
-                    formatted_pose_data[int(frame)] = formatted_skeleton
-            elif isinstance(items, dict):
-                formatted_skeleton = {}
-                for joint_id, coords in items.items():
-                    if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                        formatted_skeleton[joint_id] = {"x": float(coords[0]), "y": float(coords[1])}
-                    elif isinstance(coords, dict) and "x" in coords and "y" in coords:
-                        formatted_skeleton[joint_id] = {"x": float(coords["x"]), "y": float(coords["y"])}
-                formatted_pose_data[int(frame)] = formatted_skeleton
-        if not formatted_pose_data:
-            print(f"No valid pose data found for {key}")
-            continue
-        print(f"formatted_pose_data keys for {key}: {list(formatted_pose_data.keys())}")
-        print(f"sift_kps length: {len(sift_kps)}, sift_descs length: {len(sift_descs)}")
-        # Generate video for this folder
-        video_out = os.path.join(VIDEO_OUT_DIR, f"output_video_{i+1}.mp4")
-        create_video_from_static_image_streamed(
-            image_path=temp_image_path,
-            pose_landmarks=formatted_pose_data,
-            stored_keypoints_all=sift_kps,
-            stored_descriptors_all=sift_descs,
-            output_video=os.path.basename(video_out)
-        )
-        if not os.path.exists(video_out):
-            print(f"Video file was not created: {video_out}")
-        else:
-            print(f"Video file created: {video_out}")
-        video_paths.append(video_out)
-    if not video_paths:
-        raise HTTPException(500, "No valid videos generated for any folder")
-    # Check that all video files exist before stacking
-    missing = [vp for vp in video_paths if not os.path.exists(vp)]
-    if missing:
-        print(f"Missing video files before ffmpeg hstack: {missing}")
-        raise HTTPException(500, f"Missing video files: {missing}")
-    # Attach videos side by side using ffmpeg hstack
-    if len(video_paths) == 1:
-        concat_out = video_paths[0]
-    else:
-        hstack_filter = f"hstack=inputs={len(video_paths)}"
-        concat_out = os.path.join(VIDEO_OUT_DIR, "output_video_multi_sidebyside.mp4")
-        hstack_cmd = [
-            "ffmpeg", "-y"
-        ]
-        for vp in video_paths:
-            hstack_cmd += ["-i", vp]
-        hstack_cmd += ["-filter_complex", hstack_filter, "-c:a", "copy", concat_out]
-        print("Stacking videos side by side:", " ".join(hstack_cmd))
-        subprocess.run(hstack_cmd, check=True)
-    # Convert for browser
-    browser_ready = os.path.join(VIDEO_OUT_DIR, "output_video_multi_sidebyside_browser.mp4")
-    convert_video_for_browser(concat_out, browser_ready)
-    print("Returning multi-sidebyside video response")
-    return JSONResponse({
-        "message": "Multi-sidebyside video created successfully.",
-        "video_url": "/static/pose_feature_data/output_video/output_video_multi_sidebyside_browser.mp4"
-    })
-
 def transform_poses_to_image(
     image_path,
     pose_landmarks,
@@ -467,6 +369,7 @@ def transform_poses_to_image(
     y2_s = int(h_full - (sift_down / 100) * h_full)
 
     bbox = (x1_s, y1_s, x2_s, y2_s)
+    print(f"Using SIFT bbox: {bbox}")
 
     ref_kp, ref_desc = detect_sift(ref_img, sift_config=sift_config, use_clahe=False, bbox=bbox)
 
