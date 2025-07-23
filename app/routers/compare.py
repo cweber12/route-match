@@ -5,6 +5,7 @@ import os
 import shutil
 import cv2
 import numpy as np
+import logging
 
 from app.services.load_json_s3 import load_pose_data_from_path, load_sift_data_from_path
 from app.services.compare_pose import (
@@ -13,6 +14,9 @@ from app.services.compare_pose import (
     VIDEO_OUT_DIR,
 )
 from app.services.draw_points import rgb_to_bgr
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -133,16 +137,13 @@ async def compare_image(
                         os.fsync(f.fileno())
                     print(f"Downloaded S3 image: {built_in_image} -> {temp_image_path}")
                 except Exception as e:
-                    print(f"Failed to download S3 image: {built_in_image}", e)
                     raise HTTPException(404, f"Failed to download S3 image: {built_in_image}")
                 if not os.path.exists(temp_image_path):
-                    print(f"S3 image file not found after download: {temp_image_path}")
                     raise HTTPException(500, "S3 image file not found after download.")
                 file_size = os.path.getsize(temp_image_path)
-                print(f"Downloaded file size: {file_size}")
                 if file_size == 0:
-                    print(f"S3 image file is empty after download: {temp_image_path}")
                     raise HTTPException(500, "S3 image file is empty after download.")
+                
             else:
                 static_image_path = os.path.join("static", "images", built_in_image)
                 if not os.path.exists(static_image_path):
@@ -150,16 +151,13 @@ async def compare_image(
                 shutil.copyfile(static_image_path, temp_image_path)
                 print(f"Copied built-in image: {static_image_path} -> {temp_image_path}")
                 file_size = os.path.getsize(temp_image_path)
-                print(f"Static image file size: {file_size} bytes")
+
                 if file_size == 0:
-                    print(f"Static image file is empty: {temp_image_path}")
                     raise HTTPException(500, "Static image file is empty.")
         elif image is not None:
             # Already saved uploaded image above, just check file size
             file_size = os.path.getsize(temp_image_path)
-            print(f"Uploaded image file size: {file_size} bytes")
             if file_size == 0:
-                print(f"Uploaded image file is empty: {temp_image_path}")
                 raise HTTPException(500, "Uploaded image file is empty.")
         else:
             raise HTTPException(400, "No image provided.")
@@ -168,17 +166,13 @@ async def compare_image(
         image_cv2 = None
         try:
             image_cv2 = cv2.imread(temp_image_path)
-            print(f"Loaded image_cv2: {type(image_cv2)}, shape: {getattr(image_cv2, 'shape', None)}")
             if image_cv2 is None:
-                print("Failed to read uploaded image with cv2.imread")
                 raise HTTPException(500, "Failed to read uploaded image.")
         except Exception as e:
-            print(f"Error loading image_cv2: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error loading image with cv2.imread")
             raise HTTPException(500, f"Error loading image_cv2: {e}")
         finally:
-            # Explicitly release image_cv2 and force garbage collection
+            # Release image_cv2 and force garbage collection
             del image_cv2
             import gc
             gc.collect()
@@ -189,23 +183,18 @@ async def compare_image(
             import time
             time.sleep(0.1)  # Small delay to ensure file system consistency
             
-        print("Production mode: loading from S3 folders")
         all_pose_data = {}
         all_sift_keypoints = []
         all_sift_descriptors = []
 
         for folder in s3_folders:
             key = folder.replace("s3://route-keypoints/", "").strip("/")
-            print(f"Processing S3 folder: {key}")
             try:
                 pose = load_pose_data_from_path(key)
-                print(f"Loaded pose data from S3: {len(pose)} frames")
                 sift_kps, sift_descs = load_sift_data_from_path(key)
-                print(f"Loaded SIFT data from S3: {len(sift_kps)} keypoints, {len(sift_descs)} descriptors")
             except Exception as e:
+                logger.exception(f"Error loading pose/SIFT data from S3 for {key}")
                 print(f"Error loading pose/SIFT data from S3 for {key}: {e}")
-                import traceback
-                traceback.print_exc()
                 continue
             for frame, items in pose.items():
                 all_pose_data.setdefault(frame, []).extend(items)
@@ -214,10 +203,8 @@ async def compare_image(
         try:
             all_pose_data = {int(k): v for k, v in all_pose_data.items()}
         except Exception as e:
+            logger.exception("Error converting pose data keys to int")
             print(f"Error converting pose data keys to int: {e}")
-            import traceback
-            traceback.print_exc()
-        print(f"Total SIFT keypoints: {len(all_sift_keypoints)}, descriptors: {len(all_sift_descriptors)}")
 
         def parse_color(s):
             try:
@@ -235,24 +222,12 @@ async def compare_image(
             if os.path.exists(out_file):
                 try:
                     os.remove(out_file)
-                    print(f"Deleted old output video: {out_file}")
                 except Exception as e:
                     print(f"Failed to delete old output video: {out_file}", e)
 
         # Clear any potential SIFT caches to prevent stale data between requests
         import gc
         gc.collect()
-        
-        # Additional debugging for SIFT data
-        print(f"About to call create_video_from_static_image_streamed with:")
-        print(f"  - Image path: {temp_image_path}")
-        print(f"  - Pose landmarks: {len(all_pose_data)} frames")
-        print(f"  - SIFT keypoints: {len(all_sift_keypoints)} sets")
-        print(f"  - SIFT descriptors: {len(all_sift_descriptors)} sets")
-        if len(all_sift_keypoints) > 0:
-            print(f"  - First keypoint set size: {len(all_sift_keypoints[0])}")
-        if len(all_sift_descriptors) > 0:
-            print(f"  - First descriptor set shape: {all_sift_descriptors[0].shape if all_sift_descriptors[0] is not None else 'None'}")
         
         try:
             result = create_video_from_static_image_streamed(
@@ -272,12 +247,9 @@ async def compare_image(
             elif result == "NO_TRANSFORM":
                 raise HTTPException(422, "Unable to compute transformation between images. Please try a different image or route.")
         except HTTPException as he:
-            # Re-raise HTTPException as-is (don't wrap it)
             raise he
         except Exception as e:
-            print(f"Error in create_video_from_static_image_streamed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error in video generation")
             raise HTTPException(500, f"Error in video generation: {e}")
 
         raw_path = os.path.join(VIDEO_OUT_DIR, "output_video.mp4")
@@ -285,42 +257,30 @@ async def compare_image(
         # Check that output_video.mp4 exists and is non-empty before conversion
         try:
             if not os.path.exists(raw_path):
-                print(f"Video file not created: {raw_path}")
                 raise HTTPException(500, f"Video file not created: {raw_path}")
             file_size = os.path.getsize(raw_path)
-            print(f"Output video file size: {file_size} bytes")
             if file_size == 0:
-                print(f"Output video file is empty: {raw_path}")
                 raise HTTPException(500, f"Output video file is empty: {raw_path}")
         except Exception as e:
-            print(f"Error validating output video: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error validating output video")
             raise HTTPException(500, f"Error validating output video: {e}")
 
         # Validation before FFmpeg conversion
         try:
             if not os.path.exists(raw_path) or os.path.getsize(raw_path) == 0:
-                print(f"Output video not created or empty: {raw_path}")
                 raise HTTPException(500, "Output video not created or is empty.")
-            print(f"Converting video for browser: {raw_path} -> {browser_ready}")
             convert_video_for_browser(raw_path, browser_ready)
         except Exception as e:
-            print(f"Error converting video for browser: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error converting video for browser")
             raise HTTPException(500, f"Error converting video for browser: {e}")
 
-        print("Returning production video response")
-        # Delete the uploaded image after all processing is complete
         try:
             if os.path.exists(temp_image_path):
                 os.remove(temp_image_path)
-                print(f"Deleted temp image at end of request: {temp_image_path}")
         except Exception as e:
-            print(f"Failed to delete temp image at end of request: {temp_image_path}: {e}")
+            raise HTTPException(500, f"Failed to delete temp image at end of request: {temp_image_path}: {e}")
         return JSONResponse({
-            "message": "Comparison video created successfully.",
+            "message": "Video created successfully.",
             "video_url": "/static/pose_feature_data/output_video/output_video_browser.mp4"
         })
 
@@ -329,8 +289,7 @@ async def compare_image(
         raise he
     except Exception as e:
         print("Error in compare_image route:", e)
-        import traceback
-        traceback.print_exc()
+        logger.exception("Error in compare_image route")
         return JSONResponse(status_code=500, content={"error": "Failed to process image."})
 
 def transform_poses_to_image(
@@ -343,9 +302,6 @@ def transform_poses_to_image(
     sift_up=20.0,
     sift_down=20.0
 ):
-    """Transform pose landmarks to match the reference image using SIFT feature matching"""
-    # This is the same transformation logic from create_video_from_static_image_streamed
-    # but extracted to just return the transformed poses without creating a video
 
     ref_img = cv2.imread(image_path)
     if ref_img is None:
@@ -388,7 +344,7 @@ def transform_poses_to_image(
         else:
             continue
 
-        print(f"Processing frame {frame_num}: keypoints={len(kp)}, descriptors={desc.shape if desc is not None else 'None'}")
+        print(f"Processing frame {frame_num}")
 
         matches = match_features(
             desc, ref_desc,
@@ -408,8 +364,6 @@ def transform_poses_to_image(
         shared = [m for m in matches if m.queryIdx in prev_query_indices] if prev_query_indices else matches
         use_matches = shared if len(shared) >= 5 else matches
 
-        print(f"Using {len(use_matches)} matches for transformation on frame {frame_num}")
-
         T = compute_affine_transform(
             kp, ref_kp, use_matches,
             prev_T=prev_T,
@@ -421,11 +375,8 @@ def transform_poses_to_image(
             print(f"Failed to compute transformation matrix for frame {frame_num}")
             continue
 
-        print(f"Transformation matrix for frame {frame_num}: {T}")
-
         transformed[frame_num] = apply_transform(T, pose_landmarks[frame_num])
         prev_T = T
         prev_query_indices = set(m.queryIdx for m in use_matches)
 
-    print(f"Transformed poses: {len(transformed)} frames")
     return transformed
