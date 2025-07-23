@@ -109,7 +109,7 @@ def create_video_from_static_image(
             min_required_matches=5,
             prev_query_indices=None,
             min_shared_matches=0,
-            debug=True
+            debug=False
         )
         if not matches:
             print("No good matches found for static SIFT mode.")
@@ -123,7 +123,7 @@ def create_video_from_static_image(
             confidence=0.999,
             alpha=0.0,  # No smoothing for static
             min_required_matches=3,
-            debug=True
+            debug=False
         )
         if T is None:
             print("No transform found for static SIFT mode.")
@@ -180,7 +180,7 @@ def create_video_from_static_image(
             min_required_matches=5,
             prev_query_indices=prev_query_indices,
             min_shared_matches=0,
-            debug=True
+            debug=False
         )
 
         if not matches:
@@ -198,7 +198,7 @@ def create_video_from_static_image(
             confidence=0.999,
             alpha=0.9,
             min_required_matches=3,
-            debug=True
+            debug=False
         )
 
         if T is None:
@@ -355,7 +355,7 @@ def create_video_from_static_image_streamed(
             min_required_matches=15,
             prev_query_indices=None,
             min_shared_matches=0,
-            debug=True
+            debug=False
         )
         if not matches:
             print("No matches")
@@ -369,7 +369,7 @@ def create_video_from_static_image_streamed(
             confidence=0.999,
             alpha=0.0,
             min_required_matches=3,
-            debug=True
+            debug=False
         )
         if T is None:
             print("No transform")

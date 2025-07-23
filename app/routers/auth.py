@@ -1,3 +1,9 @@
+# app/routers/auth.py
+# ------------------------------------------------------------------------
+# This file handles user authentication, including registration and login.
+# It uses AWS DynamoDB to store user credentials securely.
+# ------------------------------------------------------------------------
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
@@ -15,21 +21,25 @@ dynamodb = boto3.resource(
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
 )
+
+# Define the DynamoDB users table
+# Ensure the table exists before using it
 table = dynamodb.Table('users')
 
-# Set the prefix and tags here!
 router = APIRouter()
 
-# User models
+# Define Pydantic models for registration input
 class UserIn(BaseModel):
     username: str
     email: str
     password: str
 
+# Define Pydantic model for login input
 class LoginIn(BaseModel):
     username: str
     password: str
 
+# Register a new user
 @router.post("/register")
 async def register(user: UserIn):
     print("/register endpoint hit!")
@@ -50,6 +60,7 @@ async def register(user: UserIn):
     })
     return {"message": "User registered successfully"}
 
+# Login a user
 @router.post("/login")
 async def login(data: LoginIn):
     response = table.get_item(Key={'userName': data.username})

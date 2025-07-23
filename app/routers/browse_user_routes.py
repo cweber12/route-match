@@ -1,3 +1,11 @@
+# app/routers/browse_user_routes.py
+# ------------------------------------------------------------------------
+# This file handles browsing user routes, including: 
+#   - Fetching the cached route/area tree from the user's s3 folder to reduce
+#     route/area loading times. 
+#   - Fetching recent attempts and route coordinates from S3.
+# ------------------------------------------------------------------------
+
 from fastapi import APIRouter, Query, HTTPException
 import boto3
 import os
@@ -10,6 +18,7 @@ from app.utils.tree_helpers import build_tree_from_s3_keys, dict_to_node_array, 
 
 router = APIRouter()
 
+# Initialize S3 client
 s3_client = boto3.client(
     "s3",
     region_name=os.getenv("AWS_REGION"),
@@ -17,10 +26,11 @@ s3_client = boto3.client(
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
 )
 
-# -----------------------------
-# Shared utility functions
-# -----------------------------
+# -----------------------------------------------------------------------
+# Utility functions (utils/cache_s3_loc_tree.py, utils/tree_helpers.py)
+# -----------------------------------------------------------------------
 
+# Try to load coordinates from S3
 def try_load_coordinates(bucket, prefix):
     key = prefix.rstrip("/") + "/gps_location/coordinates.json"
     try:
@@ -29,6 +39,8 @@ def try_load_coordinates(bucket, prefix):
     except Exception:
         return {}
 
+# Flatten coordinates from a list of nodes
+# This function is used to convert a nested structure of nodes into a flat list
 def flatten_coords(nodes, prefix=""):
     print(f"DEBUG: flatten_coords called with prefix={prefix}, nodes={len(nodes)}")
     flat = []
@@ -52,11 +64,8 @@ def flatten_coords(nodes, prefix=""):
     print(f"DEBUG: flatten_coords returning {len(flat)} flat nodes for prefix={prefix}")
     return flat
 
+# Load a previously cached location tree from S3 or build it if not present
 def load_or_build_tree(user, s3_client, bucket="route-keypoints"):
-    """
-    Try to load the cached location tree from S3. If not present, build and cache it.
-    Always returns an array of nodes.
-    """
     import json
     from botocore.exceptions import ClientError
 
@@ -75,6 +84,7 @@ def load_or_build_tree(user, s3_client, bucket="route-keypoints"):
             print(f"DEBUG: load_or_build_tree error for user={user}: {e}")
             raise
 
+# This function adds a new path to the existing tree structure.
 def add_path_to_tree(tree, path_parts):
     node = tree
     for part in path_parts:
@@ -85,6 +95,7 @@ def add_path_to_tree(tree, path_parts):
             node[part] = {}
         node = node[part]
 
+# Build a tree from a list of S3 keys
 def build_tree_from_s3_keys(keys, prefix_len):
     tree = {}
     for key in keys:
@@ -94,9 +105,13 @@ def build_tree_from_s3_keys(keys, prefix_len):
 
 TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}")
 
+# Check if a folder name matches the timestamp pattern
+# Timestamp folders represent stored route attempts inside route folders
 def is_timestamp_folder(name):
     return bool(TIMESTAMP_PATTERN.fullmatch(name))
 
+# Convert a dictionary tree structure into an array of nodes
+# This function is used to convert a nested structure of nodes into an array format for processing
 def dict_to_node_array(tree, prefix="", bucket="route-keypoints", try_load_coordinates=None, s3_client=None):
     nodes = []
     for k, v in tree.items():
@@ -114,8 +129,8 @@ def dict_to_node_array(tree, prefix="", bucket="route-keypoints", try_load_coord
             if not is_timestamp_folder(name) and '.' not in name
         ]
 
+        # If this folder has children, BUT no sub-folders (areas), AND it has timestamp folders or files, then it's a ROUTE
         if child_keys and len(non_timestamp_non_file_children) == 0 and (len(timestamp_children) > 0 or len(file_children) > 0):
-            # This is a route (leaf node), do NOT include timestamp or file children
             node = {
                 "name": k,
                 "type": "route",
@@ -123,8 +138,9 @@ def dict_to_node_array(tree, prefix="", bucket="route-keypoints", try_load_coord
                 "longitude": coords.get("lng"),
                 "children": []
             }
+        # Otherwise, it's an AREA (contains sub-areas or sub-routes)
         else:
-            # This is an area, recurse only into non-timestamp, non-file children
+ 
             children = dict_to_node_array(
                 {name: v[name] for name in non_timestamp_non_file_children},
                 node_prefix,
@@ -146,12 +162,13 @@ def dict_to_node_array(tree, prefix="", bucket="route-keypoints", try_load_coord
 # Routes
 # -----------------------------
 
+# Fetch the S3 location tree for a user
 @router.get("/s3-location-tree")
 def get_s3_location_tree(user: str = Query(...), bucket: str = Query("route-keypoints")):
     # Always returns an array
     return load_or_build_tree(user, s3_client, bucket)
 
-
+# Fetch recent route attempts for a user
 @router.get("/recent-attempts")
 def get_recent_attempts(user: str = Query(...), bucket: str = Query("route-keypoints")):
     prefix = f"{user}/"
@@ -183,7 +200,7 @@ def get_recent_attempts(user: str = Query(...), bucket: str = Query("route-keypo
     sorted_attempts = sorted(attempts, key=lambda x: x["parsed_time"], reverse=True)
     return sorted_attempts[:10]
 
-
+# Fetch all route coordinates for a user
 @router.get("/all-route-coordinates")
 def get_all_route_coordinates(
     user: str = Query(...), 
@@ -199,7 +216,11 @@ def get_all_route_coordinates(
         print(f"Error building tree for {user}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch route coordinates: {e}")
 
+# -----------------------------
+# S3 Search and Listing 
+# -----------------------------
 
+# Search S3 for keys matching a prefix
 @router.get("/s3-search")
 def s3_search(
     bucket: str = Query("route-keypoints"),
@@ -223,7 +244,7 @@ def s3_search(
         })
     return suggestions
 
-
+# List all coordinates for a given prefix
 @router.get("/list-coordinates")
 def list_coordinates(
     prefix: str = Query(..., description="S3 key prefix, e.g. 'user/Area/Subarea'"),
@@ -236,7 +257,7 @@ def list_coordinates(
     except Exception:
         raise HTTPException(status_code=404, detail="Coordinates not found")
 
-
+# List all timestamp folders under a given prefix
 @router.get("/list-timestamps")
 def list_timestamps(
     prefix: str = Query(..., description="S3 key prefix, e.g. 'user/Area/Subarea/Route'"),
@@ -260,7 +281,7 @@ def list_timestamps(
     print("DEBUG: Returning timestamps:", timestamps)
     return timestamps
 
-
+# Debugging route to list S3 keys
 @router.get("/debug-list-s3-keys")
 def debug_list_s3_keys(
     prefix: str = Query(...),
@@ -275,6 +296,8 @@ def debug_list_s3_keys(
     print("DEBUG: S3 KEYS:", keys)
     return keys
 
+# Fetch routes under a specific area
+# This route returns all routes (timestamp folders) under a given area path
 @router.get("/routes-under-area")
 def routes_under_area(user: str = Query(...), area_path: str = Query(...), bucket: str = Query("route-keypoints")):
     # Load the user's location tree from S3

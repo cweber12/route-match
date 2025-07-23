@@ -78,30 +78,28 @@ def find_matching_file(s3_folder, prefix):
     return None
 
 def load_pose_data_from_path(s3_folder):
-    print(f"[load_pose_data_from_path] ENTERED with s3_folder={s3_folder}")
-    print(f"[load_pose_data_from_path] LOCAL_STORAGE: {LOCAL_STORAGE}")
+    #print(f"[load_pose_data_from_path] ENTERED with s3_folder={s3_folder}")
+    #print(f"[load_pose_data_from_path] LOCAL_STORAGE: {LOCAL_STORAGE}")
 
     pose_json = os.path.join(LOCAL_STORAGE, f"pose_landmarks_{int(time.time())}_{os.urandom(4).hex()}.json")
-    print(f"[load_pose_data_from_path] Generated unique local file path for pose JSON: {pose_json}")
+    #print(f"[load_pose_data_from_path] Generated unique local file path for pose JSON: {pose_json}")
     s3_key = find_matching_file(s3_folder, "pose_")
-    print(f"[load_pose_data_from_path] find_matching_file returned: {s3_key}")
+    #print(f"[load_pose_data_from_path] find_matching_file returned: {s3_key}")
     if not s3_key:
-        print(f"[load_pose_data_from_path] No S3 key found, raising FileNotFoundError")
+        #print(f"[load_pose_data_from_path] No S3 key found, raising FileNotFoundError")
         raise FileNotFoundError("Pose file not found in S3 folder.")
-    print(f"[load_pose_data_from_path] Matched S3 key for pose JSON: {s3_key}")
+    #print(f"[load_pose_data_from_path] Matched S3 key for pose JSON: {s3_key}")
     download_from_s3(s3_key, pose_json)
 
     # Ensure downloaded file is not empty
     if os.path.getsize(pose_json) == 0:
-        print(f"[load_pose_data_from_path] Downloaded pose file is empty: {pose_json}")
         raise ValueError(f"Downloaded pose file is empty: {pose_json}")
 
     with open(pose_json, "r") as f:
         try:
             data = json.load(f)
-            print(f"[load_pose_data_from_path] Downloaded pose file content")
+            #print(f"[load_pose_data_from_path] Downloaded pose file content")
         except json.JSONDecodeError as e:
-            print(f"[load_pose_data_from_path] Failed to parse JSON content: {e}")
             raise ValueError(f"Failed to parse JSON content from {pose_json}: {e}")
 
     poses = {}
@@ -109,34 +107,34 @@ def load_pose_data_from_path(s3_folder):
         if not isinstance(item, dict) or "frame" not in item:
             continue
         poses.setdefault(item["frame"], []).append(item)
-    print(f"[load_pose_data_from_path] Loaded pose data: {len(poses)} frames")
+    #print(f"[load_pose_data_from_path] Loaded pose data: {len(poses)} frames")
     return poses
 
 def load_sift_data_from_path(s3_folder):
-    print(f"[load_sift_data_from_path] ENTERED with s3_folder={s3_folder}")
-    print(f"[load_sift_data_from_path] LOCAL_STORAGE: {LOCAL_STORAGE}")
+    #print(f"[load_sift_data_from_path] ENTERED with s3_folder={s3_folder}")
+    #print(f"[load_sift_data_from_path] LOCAL_STORAGE: {LOCAL_STORAGE}")
 
     sift_json = os.path.join(LOCAL_STORAGE, f"sift_keypoints_{int(time.time())}_{os.urandom(4).hex()}.json")
-    print(f"[load_sift_data_from_path] Generated unique local file path for SIFT JSON: {sift_json}")
+    #print(f"[load_sift_data_from_path] Generated unique local file path for SIFT JSON: {sift_json}")
     s3_key = find_matching_file(s3_folder, "sift_")
-    print(f"[load_sift_data_from_path] find_matching_file returned: {s3_key}")
+    #print(f"[load_sift_data_from_path] find_matching_file returned: {s3_key}")
     if not s3_key:
-        print(f"[load_sift_data_from_path] No S3 key found, raising FileNotFoundError")
+        #print(f"[load_sift_data_from_path] No S3 key found, raising FileNotFoundError")
         raise FileNotFoundError("SIFT file not found in S3 folder.")
-    print(f"[load_sift_data_from_path] Matched S3 key for SIFT JSON: {s3_key}")
+    #print(f"[load_sift_data_from_path] Matched S3 key for SIFT JSON: {s3_key}")
     download_from_s3(s3_key, sift_json)
 
     # Ensure downloaded file is not empty
     if os.path.getsize(sift_json) == 0:
-        print(f"[load_sift_data_from_path] Downloaded SIFT file is empty: {sift_json}")
+        #print(f"[load_sift_data_from_path] Downloaded SIFT file is empty: {sift_json}")
         raise ValueError(f"Downloaded SIFT file is empty: {sift_json}")
 
     with open(sift_json, "r") as f:
         try:
             raw_data = json.load(f)
-            print(f"[load_sift_data_from_path] Downloaded SIFT file content")
+            #print(f"[load_sift_data_from_path] Downloaded SIFT file content")
         except json.JSONDecodeError as e:
-            print(f"[load_sift_data_from_path] Failed to parse JSON content: {e}")
+            #print(f"[load_sift_data_from_path] Failed to parse JSON content: {e}")
             raise ValueError(f"Failed to parse JSON content from {sift_json}: {e}")
 
     frame_dict = {}
@@ -150,5 +148,5 @@ def load_sift_data_from_path(s3_folder):
         desc = [d["descriptor"] for d in frame_data]
         kps_all.append(kps)
         descs_all.append(np.array(desc, dtype=np.float32))
-    print(f"[load_sift_data_from_path] Loaded SIFT data: {len(kps_all)} keypoints sets, {len(descs_all)} descriptors sets")
+    #print(f"[load_sift_data_from_path] Loaded SIFT data: {len(kps_all)} keypoints sets, {len(descs_all)} descriptors sets")
     return kps_all, descs_all

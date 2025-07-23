@@ -1,3 +1,10 @@
+# app/routers/compare.py
+# -----------------------------------------------------------------------------------------
+# This file handles the comparison of climbing route images using SIFT and pose estimation.
+# It allows users to upload images and compare them against stored climbing data (pose/SIFT)
+# for a route.
+# -----------------------------------------------------------------------------------------
+
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from typing import List
@@ -292,21 +299,24 @@ async def compare_image(
         logger.exception("Error in compare_image route")
         return JSONResponse(status_code=500, content={"error": "Failed to process image."})
 
+# Transform poses to image using SIFT matching and transformed pose landmark coordinates
 def transform_poses_to_image(
     image_path,
     pose_landmarks,
     stored_keypoints_all,
     stored_descriptors_all,
-    sift_left=20.0,
-    sift_right=20.0,
-    sift_up=20.0,
-    sift_down=20.0
+    sift_left=10.0,
+    sift_right=10.0,
+    sift_up=10.0,
+    sift_down=10.0
 ):
 
+    # Validate input image
     ref_img = cv2.imread(image_path)
     if ref_img is None:
         return {}
 
+    # Define SIFT parameters
     sift_config = {
         "nfeatures": 2000,
         "contrastThreshold": 0.04,
@@ -314,30 +324,38 @@ def transform_poses_to_image(
         "sigma": 1.6
     }
 
+    # Import necessary services
     from app.services.detect_img_sift import detect_sift
     from app.services.match_features import match_features, compute_affine_transform
     from app.services.draw_points import apply_transform
 
+    # Define SIFT bounding box based on image dimensions and passed SIFT parameters
     h_full, w_full = ref_img.shape[:2]
     x1_s = int(sift_left / 100 * w_full)
     y1_s = int(sift_up / 100 * h_full)
     x2_s = int(w_full - (sift_right / 100) * w_full)
     y2_s = int(h_full - (sift_down / 100) * h_full)
-
     bbox = (x1_s, y1_s, x2_s, y2_s)
+
     print(f"Using SIFT bbox: {bbox}")
 
+    # Detect SIFT keypoints and descriptors in the uploaded image
     ref_kp, ref_desc = detect_sift(ref_img, sift_config=sift_config, use_clahe=False, bbox=bbox)
 
+    # Initialize transformation variables
     transformed = {}
     prev_T = None
     prev_query_indices = set()
 
+    # Define frame keys from pose landmarks
     frame_keys = sorted(pose_landmarks.keys())
+    # Loop through each frame in the stored pose landmarks
     for i, frame_num in enumerate(frame_keys):
-        if len(stored_keypoints_all) == 1:
+        # If only one set of keypoints/descriptors is available, use it for all frames
+        if len(stored_keypoints_all) == 1: 
             kp = stored_keypoints_all[0]
             desc = stored_descriptors_all[0]
+        # If more than one set is available, use the current frame's keypoints/descriptors
         elif i < len(stored_keypoints_all):
             kp = stored_keypoints_all[i]
             desc = stored_descriptors_all[i]
@@ -346,6 +364,7 @@ def transform_poses_to_image(
 
         print(f"Processing frame {frame_num}")
 
+        # Match features between current frame and reference image
         matches = match_features(
             desc, ref_desc,
             prev_query_indices=prev_query_indices,
@@ -361,9 +380,12 @@ def transform_poses_to_image(
             print(f"No matches found for frame {frame_num}")
             continue
 
+        # Define shared matches and use them exclusively if there are more than 5
         shared = [m for m in matches if m.queryIdx in prev_query_indices] if prev_query_indices else matches
         use_matches = shared if len(shared) >= 5 else matches
+        print(f"Shared matches: {len(shared)} , use_matches: {len(use_matches)}")
 
+        # Compute affine transformation matrix using the matched keypoints
         T = compute_affine_transform(
             kp, ref_kp, use_matches,
             prev_T=prev_T,
