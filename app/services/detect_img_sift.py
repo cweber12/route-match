@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-def detect_sift(image, sift_config=None, use_clahe=False, clahe_config=None, use_hist_eq=True, use_normalize=True, bbox=None, detector=None):
+def detect_sift(image, sift_config=None, use_hist_eq=True, use_normalize=True, bbox=None, detector=None):
     sift_config = sift_config or {}
     
     # Force garbage collection before creating SIFT detector
@@ -34,13 +34,6 @@ def detect_sift(image, sift_config=None, use_clahe=False, clahe_config=None, use
     if use_hist_eq:
         gray = cv2.equalizeHist(gray)
 
-    if use_clahe:
-        clahe_config = clahe_config or {}
-        clip_limit = clahe_config.get("clipLimit", 2.0)
-        tile_grid_size = clahe_config.get("tileGridSize", (8, 8))
-        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-        gray = clahe.apply(gray)
-
     # Apply normalization if requested (scales pixel values to full 0-255 range)
     if use_normalize:
         gray = cv2.normalize(gray, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
@@ -54,20 +47,15 @@ def detect_sift(image, sift_config=None, use_clahe=False, clahe_config=None, use
     
     # Validate SIFT results immediately
     if keypoints is None or descriptors is None:
-        print("❌ SIFT detection failed - got None keypoints or descriptors")
+        print("SIFT detection failed - got None keypoints or descriptors")
         return [], None
     
     if len(keypoints) == 0 or descriptors.shape[0] == 0:
-        print("❌ SIFT detection failed - got empty keypoints or descriptors")
+        print("SIFT detection failed - got empty keypoints or descriptors")
         return [], None
     
     print(f"✔ SIFT detection successful: {len(keypoints)} keypoints, descriptor shape: {descriptors.shape}")
     
-    # Log preprocessing steps
-    print(f"Preprocessing steps: use_hist_eq={use_hist_eq}, use_clahe={use_clahe}, use_normalize={use_normalize}")
-    if use_clahe and clahe_config:
-        print(f"CLAHE configuration: clipLimit={clahe_config.get('clipLimit', 2.0)}, tileGridSize={clahe_config.get('tileGridSize', (8, 8))}")
-
     # Log bounding box if provided
     if bbox:
         print(f"Cropping image to bbox: {bbox}")

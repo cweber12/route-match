@@ -26,7 +26,9 @@ VIDEO_OUT_DIR = os.path.join("temp_uploads", "pose_feature_data", "output_video"
 POSE_JSON = os.path.join("static", "pose_feature_data", "pose_landmarks.json")
 SIFT_JSON = os.path.join("static", "pose_feature_data", "sift_keypoints.json")
 
-
+# Interpolate between poses in subsequent stored frames
+# Example: If data is stored for every 20 frames, this will estimate pose landmark 
+# coordinates for the 19 frames in between, creating a smoother transition.
 def linear_interpolate_pose(pose1, pose2, alpha):
     shared_keys = set(pose1.keys()) & set(pose2.keys())
     result = {}
@@ -38,13 +40,16 @@ def linear_interpolate_pose(pose1, pose2, alpha):
             result[k] = (1 - alpha) * np.array(v1) + alpha * np.array(v2)
     return result
 
-
+# Clears the output video from the previous run before creating a new one
 def clear_output_dir():
     for file in os.listdir(VIDEO_OUT_DIR):
         file_path = os.path.join(VIDEO_OUT_DIR, file)
         if os.path.isfile(file_path):
             os.remove(file_path)
 
+# Creates a video by drawing pose landmarks and connecting lines on copies of the 
+# image uploaded by the user.
+# Path: /temp_uploads/pose_feature_data/output_video
 def create_video_from_static_image(
     image_path,
     pose_landmarks,
@@ -52,7 +57,7 @@ def create_video_from_static_image(
     stored_descriptors_all,
     output_video="output_video.mp4"
 ):
-    # Force-load reference image with explicit color mode and immediate clone
+    # Force-load reference image with explicit color mode to ensure it is in BGR format
     ref_img = cv2.imread(image_path, cv2.IMREAD_COLOR)
     if ref_img is None:
         print(f"Failed to load reference image from {image_path}")
@@ -60,10 +65,16 @@ def create_video_from_static_image(
     
     # Immediately clone to ensure fresh memory
     ref_img = ref_img.copy()
-    os.makedirs(VIDEO_OUT_DIR, exist_ok=True)
-    clear_output_dir()
+
+    # Remove entire directory and recreate
+    if os.path.exists(VIDEO_OUT_DIR):
+        shutil.rmtree(VIDEO_OUT_DIR)
+    os.makedirs(VIDEO_OUT_DIR)
+
+    # Create output video path
     out_path = os.path.join(VIDEO_OUT_DIR, output_video)
 
+    # Initialize SIFT parameters
     sift_config = {
         "nfeatures": 2000,
         "contrastThreshold": 0.04,
@@ -71,10 +82,10 @@ def create_video_from_static_image(
         "sigma": 1.6
     }
 
+    # Detect SIFT keypoints and descriptors in the uploaded image
     ref_kp, ref_desc = detect_sift(
         ref_img,
-        sift_config=sift_config,
-        use_clahe=False
+        sift_config=sift_config, 
     )
     
     # Validate SIFT results immediately
@@ -86,14 +97,18 @@ def create_video_from_static_image(
         json.dump(sift_config, f, indent=4)
 
     # Check if only one frame of SIFT data exists
+    # If 
     static_mode = len(stored_keypoints_all) == 1
 
+    # Initialize dict to store transformed poses
     transformed = {}
+    # Previous transformation matrix and query indices for matching
     prev_T = None
     prev_query_indices = set()
+    # Keep track of skipped frames to log unsuccessful matches
     skipped_frames = 0
 
-    
+    # 
     frame_keys = sorted(pose_landmarks.keys())
     # If static_mode, match and compute transform ONCE, then apply to all frames
     if static_mode:

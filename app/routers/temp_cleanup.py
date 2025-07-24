@@ -1,3 +1,12 @@
+# app/routers/temp_cleanup.py
+# -----------------------------------------------------------------
+# This module provides endpoints to clear temporary and output folders.
+# When a user selects a new image for processing, both endpoints are 
+# called via: 
+#   - await fetch(`${API}/api/clear-output`, { method: "POST" });
+#   - await fetch(`${API}/api/clear-temp`, { method: "DELETE" });
+# -----------------------------------------------------------------
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 import shutil
@@ -5,6 +14,7 @@ import os
 
 router = APIRouter()
 
+# Clears the temp_uploads folder where temporary image and json files are stored. 
 @router.delete("/clear-temp")
 async def clear_temp_folder():
     temp_path = os.path.join(os.getcwd(), "temp_uploads")
@@ -20,6 +30,7 @@ async def clear_temp_folder():
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+# Clears the /static folder where output files are stored
 @router.post("/clear-output")
 async def clear_output_folder():
     output_dir = "static"
