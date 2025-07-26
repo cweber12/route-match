@@ -346,7 +346,12 @@ def create_video_from_static_image_streamed(
         sigma=1.6,
     )
 
-    ref_kp, ref_desc = detect_sift(ref_img, sift_config, False, bbox=bbox, detector=detector)
+    ref_kp, ref_desc = detect_sift(
+        ref_img, 
+        sift_config=sift_config, 
+        bbox=bbox, 
+        detector=detector
+    )
     if not ref_kp or ref_desc is None or len(ref_kp) == 0:
         print("SIFT failed")
         return {"error": "SIFT failure"}

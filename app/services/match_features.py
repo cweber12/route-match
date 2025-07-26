@@ -21,146 +21,84 @@ def get_transformation_info(T):
     
     return f"Scale: X={scale_x:.3f}, Y={scale_y:.3f} | Rotation: {rotation_degrees:.1f}° | Translation: ({trans_x:.1f}, {trans_y:.1f})"
 
+import heapq
 
-# This function matches features between two sets of descriptors using the BFMatcher.
-# It filters matches based on a distance ratio and a distance threshold.
 def match_features(
     desc1,
     desc2,
-    ratio_thresh,
-    distance_thresh,
-    top_n,
-    min_required_matches,
+    ratio_thresh=0.75,
+    distance_thresh=500.0,
+    top_n=100,
+    min_required_matches=10,
     prev_query_indices=None,
     min_shared_matches=0,
     debug=False
 ):
-    
-
-    # Set default values for None parameters
-    if ratio_thresh is None:
-        ratio_thresh = 0.75
-    if distance_thresh is None:
-        distance_thresh = 500.0
-    if top_n is not None:
-        top_n = int(top_n)
-
-    # Force garbage collection before creating matcher
-    import gc
-    import time
-    import sys
-
-    # Clear any numpy/OpenCV caches
-    gc.collect()
-
-    # Clear OpenCV state
-    cv2.setUseOptimized(False)
-    cv2.setUseOptimized(True)
-
-    # Add randomness to prevent any caching
-    timestamp = int(time.time() * 1000000) % 1000000
-
-    # Create a fresh BFMatcher for each call with unique seed
-    cv2.setRNGSeed(timestamp)
-    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
-
-    if debug:
-        print(f"Created fresh BFMatcher with seed: {timestamp}")
-
-    # Defensive: ensure descriptors are valid
+    # Validate descriptors
     if desc1 is None or desc2 is None:
-        if debug:
-            print("[match_features] One or both descriptors are None, returning empty matches")
+        if debug: print("[match_features] One or both descriptors are None.")
+        return []
+    if len(desc1) < 2 or len(desc2) < 2:
+        if debug: print("[match_features] One or both descriptors are too small for knnMatch.")
         return []
     if not hasattr(desc1, 'shape') or not hasattr(desc2, 'shape'):
-        if debug:
-            print("[match_features] One or both descriptors missing shape attribute, returning empty matches")
-        return []
-    if len(desc1) == 0 or len(desc2) == 0:
-        if debug:
-            print("[match_features] One or both descriptors are empty, returning empty matches")
+        if debug: print("[match_features] Missing shape attribute in descriptors.")
         return []
 
-    # Additional check for descriptor types and shapes
+    # Ensure dtype
     if desc1.dtype != np.float32:
         desc1 = desc1.astype(np.float32)
     if desc2.dtype != np.float32:
         desc2 = desc2.astype(np.float32)
 
     if debug:
-        print(f"Matching descriptors: desc1 shape {desc1.shape}, desc2 shape {desc2.shape}")
+        print(f"[match_features] Matching descriptors: desc1 shape {desc1.shape}, desc2 shape {desc2.shape}")
 
+    # Match using BFMatcher
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
     try:
-        matches = bf.knnMatch(desc1, desc2, k=2)
+        raw_matches = bf.knnMatch(desc1, desc2, k=2)
     except Exception as e:
-        if debug:
-            print(f"Error in knnMatch: {e}")
+        if debug: print(f"[match_features] Error in knnMatch: {e}")
         return []
-    
-    # Filter out matches where we don't have 2 neighbors (shouldn't happen with proper descriptors)
-    valid_matches = [m for m in matches if len(m) == 2]
-    
-    if debug:
-        print(f"Got {len(matches)} raw matches, {len(valid_matches)} valid matches")
-    
-    # Debug: print first 10 match distances before filtering
-    if debug and len(valid_matches) > 0:
-        print("First 10 match distances (m.distance, n.distance):")
-        for i, (m, n) in enumerate(valid_matches[:10]):
-            print(f"  Match {i}: m.distance={m.distance:.4f}, n.distance={n.distance:.4f}")
 
+    valid_matches = [m for m in raw_matches if len(m) == 2]
+    if debug:
+        print(f"[match_features] Got {len(raw_matches)} raw matches, {len(valid_matches)} valid matches")
+
+    # Apply Lowe's ratio test and distance threshold
     good = []
     for m, n in valid_matches:
-        # More stringent ratio test for better quality matches
         if m.distance < ratio_thresh * n.distance and m.distance < distance_thresh:
             good.append(m)
 
-    # Sort by distance and keep only the best matches
-    good = sorted(good, key=lambda x: x.distance)
-    
-    # Additional filtering: Remove matches that are too far from the median distance
-    if len(good) > min_required_matches:
-        distances = [m.distance for m in good]
-        median_distance = np.median(distances)
-        std_distance = np.std(distances)
-        
-        # Filter out outliers (matches that are too far from median)
-        filtered_good = []
-        for m in good:
-            if abs(m.distance - median_distance) <= 2 * std_distance:
-                filtered_good.append(m)
-        
-        if len(filtered_good) >= min_required_matches:
-            good = filtered_good
-            if debug:
-                print(f"Filtered outliers: {len(good)} matches remain after outlier removal")
-    
-    # Keep only top-N matches
-    good = good[:top_n]
-
-    if debug:
-        print(f"Found {len(valid_matches)} valid matches, {len(good)} good matches")
-
-    if len(good) < min_required_matches:
-        if debug:
-            print(f"Not enough stable matches ({len(good)} < {min_required_matches}), skipping this frame.")
+    if len(good) == 0:
+        if debug: print("[match_features] No good matches passed ratio and distance threshold.")
         return []
 
-    # Optional: Enforce shared matches with previous frame
+    # Optional: filter out outliers based on median + std (if large set)
+    if len(good) > 100:
+        distances = np.array([m.distance for m in good])
+        median_distance = np.median(distances)
+        std_distance = np.std(distances)
+        good = [m for m in good if abs(m.distance - median_distance) <= 2 * std_distance]
+        if debug: print(f"[match_features] Filtered outliers: {len(good)} remain after median/std filtering")
+
+    if len(good) < min_required_matches:
+        if debug: print(f"[match_features] Not enough matches ({len(good)} < {min_required_matches})")
+        return []
+
+    # Keep only top-N matches
+    good = heapq.nsmallest(top_n, good, key=lambda x: x.distance)
+
+    # Optional: enforce shared queryIdx matches with previous frame
     if prev_query_indices is not None:
-        print(f"Previous query indices: {prev_query_indices}")
         shared = [m for m in good if m.queryIdx in prev_query_indices]
         if debug:
-            print(f"✔ Shared matches with previous frame: {len(shared)}")
+            print(f"[match_features] Shared matches: {len(shared)} (required: {min_shared_matches})")
         if len(shared) < min_shared_matches:
-            if debug:
-                print(f"Only {len(shared)} shared matches (min required: {min_shared_matches}), skipping frame.")
             return []
 
-    # Clean up matcher
-    del bf
-    gc.collect()
-    
     return good
 
 def compute_affine_transform(

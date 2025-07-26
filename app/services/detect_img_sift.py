@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-def detect_sift(image, sift_config=None, use_hist_eq=True, use_normalize=True, bbox=None, detector=None):
+def detect_sift(image, sift_config=None, bbox=None, detector=None):
     sift_config = sift_config or {}
     
     # Force garbage collection before creating SIFT detector
@@ -30,13 +30,11 @@ def detect_sift(image, sift_config=None, use_hist_eq=True, use_normalize=True, b
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # Apply histogram equalization if requested
-    if use_hist_eq:
-        gray = cv2.equalizeHist(gray)
+    # Apply histogram equalization
+    gray = cv2.equalizeHist(gray)
 
-    # Apply normalization if requested (scales pixel values to full 0-255 range)
-    if use_normalize:
-        gray = cv2.normalize(gray, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    # Apply normalization (scales pixel values to full 0-255 range)
+    gray = cv2.normalize(gray, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
 
     # Run SIFT
     keypoints, descriptors = sift.detectAndCompute(gray, None)
