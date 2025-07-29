@@ -289,6 +289,7 @@ def create_video_from_static_image_streamed(
     sift_down=20.0,
     line_color=(100, 255, 0),
     point_color=(0, 100, 255),
+    frame_dimensions=None
 ):
 
     # Clean up local storage ONCE before any S3 downloads
@@ -316,7 +317,14 @@ def create_video_from_static_image_streamed(
         print(f"Failed to load {image_path}")
         return {"error": "Image load failed"}
     ref_img = ref_img.copy()
-
+    if frame_dimensions is not None:
+        if isinstance(frame_dimensions, tuple) and len(frame_dimensions) == 2:
+            stored_width, stored_height = frame_dimensions
+            stored_resolution = stored_width * stored_height
+            ref_resolution = ref_img.shape[1] * ref_img.shape[0]
+            if ref_resolution > stored_resolution:
+                scale_factor = stored_resolution / ref_resolution
+                ref_img = cv2.resize(ref_img, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
     os.makedirs(VIDEO_OUT_DIR, exist_ok=True)
     out_path = os.path.join(VIDEO_OUT_DIR, output_video)
     for f in os.listdir(VIDEO_OUT_DIR):

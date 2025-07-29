@@ -1,29 +1,11 @@
-# Call this function ONCE before any S3 downloads to clean up local storage
-def cleanup_local_storage():
-    print(f"[cleanup_local_storage] Cleaning up {LOCAL_STORAGE}")
-    try:
-        files_before = os.listdir(LOCAL_STORAGE)
-    except Exception as e:
-        print(f"[cleanup_local_storage] Exception listing LOCAL_STORAGE: {e}")
-        files_before = []
-    print(f"[cleanup_local_storage] Files in LOCAL_STORAGE before cleanup: {files_before}")
-    old_files = [f for f in files_before if f.startswith("pose_landmarks") or f.startswith("sift_keypoints")]
-    print(f"[cleanup_local_storage] Found old files to delete: {old_files}")
-    for old_file in old_files:
-        try:
-            file_path = os.path.join(LOCAL_STORAGE, old_file)
-            os.remove(file_path)
-            print(f"[cleanup_local_storage] Deleted old file: {file_path}")
-        except Exception as e:
-            print(f"[cleanup_local_storage] Failed to delete old file {file_path}: {e}")
-    try:
-        files_after = os.listdir(LOCAL_STORAGE)
-    except Exception as e:
-        print(f"[cleanup_local_storage] Exception listing LOCAL_STORAGE after cleanup: {e}")
-        files_after = []
-    print(f"[cleanup_local_storage] Files in LOCAL_STORAGE after cleanup: {files_after}")
+# load_json_s3.py
+# ----------------------------------------------------------------------------------------------------------
+# This module provides functions to load pose and SIFT keypoint data from JSON files stored in an S3 bucket.
+# It includes functions to download files from S3, parse JSON content, and validate the data.
+# ----------------------------------------------------------------------------------------------------------
+
 import os
-import json
+import json 
 import cv2
 import numpy as np
 import boto3
@@ -39,29 +21,37 @@ s3 = boto3.client(
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
 )
 
+# Call this function ONCE before any S3 downloads to clean up local storage
+def cleanup_local_storage():
+    try:
+        files_before = os.listdir(LOCAL_STORAGE)
+    except Exception as e:
+        print(f"[cleanup_local_storage] Exception listing LOCAL_STORAGE: {e}")
+        files_before = []
+    old_files = [f for f in files_before if f.startswith("pose_landmarks") or f.startswith("sift_keypoints")]
+    for old_file in old_files:
+        try:
+            file_path = os.path.join(LOCAL_STORAGE, old_file)
+            os.remove(file_path)
+        except Exception as e:
+            print(f"[cleanup_local_storage] Failed to delete old file {file_path}: {e}")
+    
 def download_from_s3(s3_key, local_path):
-    print(f"[download_from_s3] Called with s3_key={s3_key}, local_path={local_path}")
     if os.path.exists(local_path):
         print(f"[download_from_s3] File already exists locally: {local_path}")
     else:
-        print(f"[download_from_s3] File does not exist locally, proceeding to download: {local_path}")
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        print(f"[download_from_s3] ⬇Downloading from S3: {s3_key}")
         try:
             s3.download_file(S3_BUCKET, s3_key, local_path)
-            print(f"[download_from_s3] Download complete: {local_path}")
         except Exception as e:
             print(f"[download_from_s3] Exception during download: {e}")
             raise
         if os.path.getsize(local_path) == 0:
-            print(f"[download_from_s3] Downloaded file is empty: {local_path}")
             raise ValueError(f"Downloaded file is empty: {local_path}")
 
 def find_matching_file(s3_folder, prefix):
-    print(f"[find_matching_file] Called with s3_folder={s3_folder}, prefix={prefix}")
     try:
         response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=s3_folder)
-        print(f"[find_matching_file] S3 list_objects_v2 response: {response}")
     except Exception as e:
         print(f"[find_matching_file] Exception during S3 list_objects_v2: {e}")
         return None
@@ -70,25 +60,16 @@ def find_matching_file(s3_folder, prefix):
         return None
     for obj in response["Contents"]:
         filename = obj["Key"].split("/")[-1]
-        print(f"[find_matching_file] Checking file: {filename}, S3 key: {obj['Key']}")
         if filename.startswith(prefix) and filename.endswith(".json"):
-            print(f"[find_matching_file] Matched file: {filename}")
             return obj["Key"]
-    print(f"[find_matching_file] No matching file found for prefix: {prefix}")
     return None
 
 def load_pose_data_from_path(s3_folder):
-    #print(f"[load_pose_data_from_path] ENTERED with s3_folder={s3_folder}")
-    #print(f"[load_pose_data_from_path] LOCAL_STORAGE: {LOCAL_STORAGE}")
 
     pose_json = os.path.join(LOCAL_STORAGE, f"pose_landmarks_{int(time.time())}_{os.urandom(4).hex()}.json")
-    #print(f"[load_pose_data_from_path] Generated unique local file path for pose JSON: {pose_json}")
     s3_key = find_matching_file(s3_folder, "pose_")
-    #print(f"[load_pose_data_from_path] find_matching_file returned: {s3_key}")
     if not s3_key:
-        #print(f"[load_pose_data_from_path] No S3 key found, raising FileNotFoundError")
         raise FileNotFoundError("Pose file not found in S3 folder.")
-    #print(f"[load_pose_data_from_path] Matched S3 key for pose JSON: {s3_key}")
     download_from_s3(s3_key, pose_json)
 
     # Ensure downloaded file is not empty
@@ -98,7 +79,6 @@ def load_pose_data_from_path(s3_folder):
     with open(pose_json, "r") as f:
         try:
             data = json.load(f)
-            #print(f"[load_pose_data_from_path] Downloaded pose file content")
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse JSON content from {pose_json}: {e}")
 
@@ -107,40 +87,45 @@ def load_pose_data_from_path(s3_folder):
         if not isinstance(item, dict) or "frame" not in item:
             continue
         poses.setdefault(item["frame"], []).append(item)
-    #print(f"[load_pose_data_from_path] Loaded pose data: {len(poses)} frames")
     return poses
 
 def load_sift_data_from_path(s3_folder):
-    #print(f"[load_sift_data_from_path] ENTERED with s3_folder={s3_folder}")
-    #print(f"[load_sift_data_from_path] LOCAL_STORAGE: {LOCAL_STORAGE}")
 
     sift_json = os.path.join(LOCAL_STORAGE, f"sift_keypoints_{int(time.time())}_{os.urandom(4).hex()}.json")
-    #print(f"[load_sift_data_from_path] Generated unique local file path for SIFT JSON: {sift_json}")
     s3_key = find_matching_file(s3_folder, "sift_")
-    #print(f"[load_sift_data_from_path] find_matching_file returned: {s3_key}")
     if not s3_key:
-        #print(f"[load_sift_data_from_path] No S3 key found, raising FileNotFoundError")
         raise FileNotFoundError("SIFT file not found in S3 folder.")
-    #print(f"[load_sift_data_from_path] Matched S3 key for SIFT JSON: {s3_key}")
     download_from_s3(s3_key, sift_json)
 
     # Ensure downloaded file is not empty
     if os.path.getsize(sift_json) == 0:
-        #print(f"[load_sift_data_from_path] Downloaded SIFT file is empty: {sift_json}")
         raise ValueError(f"Downloaded SIFT file is empty: {sift_json}")
 
     with open(sift_json, "r") as f:
         try:
             raw_data = json.load(f)
-            #print(f"[load_sift_data_from_path] Downloaded SIFT file content")
         except json.JSONDecodeError as e:
-            #print(f"[load_sift_data_from_path] Failed to parse JSON content: {e}")
             raise ValueError(f"Failed to parse JSON content from {sift_json}: {e}")
+        
+    # Handle both old and new JSON formats
+    if isinstance(raw_data, dict) and "sift_features" in raw_data:
+        # New format: {"frame_dimensions": {...}, "sift_features": [...]}
+        print(f"[load_sift_data_from_path] Detected new JSON format with frame_dimensions")
+        frame_dimensions = raw_data.get("frame_dimensions", {})
+        feature_data = raw_data["sift_features"]
+        print(f"[load_sift_data_from_path] Frame dimensions: {frame_dimensions}")
+    elif isinstance(raw_data, list):
+        # Old format: [{"frame": ..., "x": ..., ...}, ...]
+        print(f"[load_sift_data_from_path] Detected old JSON format (array)")
+        feature_data = raw_data
+    else:
+        raise ValueError(f"Unrecognized JSON format in {sift_json}")
 
     frame_dict = {}
-    for entry in raw_data:
+    for entry in feature_data:
         frame = entry["frame"]
         frame_dict.setdefault(frame, []).append(entry)
+
     kps_all, descs_all = [], []
     for frame in sorted(frame_dict):
         frame_data = frame_dict[frame]
@@ -148,5 +133,4 @@ def load_sift_data_from_path(s3_folder):
         desc = [d["descriptor"] for d in frame_data]
         kps_all.append(kps)
         descs_all.append(np.array(desc, dtype=np.float32))
-    #print(f"[load_sift_data_from_path] Loaded SIFT data: {len(kps_all)} keypoints sets, {len(descs_all)} descriptors sets")
-    return kps_all, descs_all
+    return kps_all, descs_all, frame_dimensions if 'frame_dimensions' in locals() else None

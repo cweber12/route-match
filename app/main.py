@@ -17,12 +17,9 @@ from app.routers import (
     temp_cleanup,
     compare, 
     browse_user_routes,
-    map_data
+    map_data,
+    health
 )
-
-
-
-
 
 warnings.filterwarnings("ignore", category=FutureWarning, module=".*common.*")
 
@@ -32,6 +29,7 @@ app = FastAPI(debug=True)
 async def _root():
     return {"status": "ok"}
 
+# Static file serving
 app.mount("/static", StaticFiles(directory=os.path.abspath("temp_uploads")), name="static")
 print("Serving static from:", os.path.abspath("temp_uploads"))
 
@@ -62,11 +60,10 @@ app.include_router(temp_cleanup.router, prefix="/api", tags=["Temp File Cleanup"
 app.include_router(compare.router, prefix="/api", tags=["Keypoint Comparison"])
 app.include_router(browse_user_routes.router, prefix="/api", tags=["Browse User Routes"])
 app.include_router(map_data.router, prefix="/api", tags=["Map Data"])
+app.include_router(health.router, prefix="/api", tags=["Health Check"])
 
 #for route in app.routes:
     #print("Route:", route.path)
 
-#if __name__ == "__main__":
-    #uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
-
-
+if __name__ == "__main__":
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)

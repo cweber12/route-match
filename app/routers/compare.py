@@ -13,6 +13,7 @@ import shutil
 import cv2
 import numpy as np
 import logging
+import gc
 
 from app.services.load_json_s3 import load_pose_data_from_path, load_sift_data_from_path
 from app.services.compare_pose import (
@@ -22,59 +23,9 @@ from app.services.compare_pose import (
 )
 from app.services.draw_points import rgb_to_bgr
 
-# Set up logger
+# Set up logger for debugging
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-router = APIRouter()
-
-# Health check for filesystem access
-@router.get("/health-check-fs")
-async def health_check_fs():
-    import stat
-    import gc
-    results = {}
-    temp_dir = "temp_uploads"
-    output_dir = os.path.join("temp_uploads", "pose_feature_data", "output_video")
-    for dir_path in [temp_dir, output_dir]:
-        results[dir_path] = {}
-        try:
-            # Check existence and permissions
-            exists = os.path.exists(dir_path)
-            perms = None
-            if exists:
-                perms = stat.filemode(os.stat(dir_path).st_mode)
-            results[dir_path]["exists"] = exists
-            results[dir_path]["permissions"] = perms
-            # Try to create, write, read, and delete a temp file
-            test_file = os.path.join(dir_path, "health_check_test.txt")
-            try:
-                with open(test_file, "w") as f:
-                    f.write("health check")
-                results[dir_path]["write"] = True
-            except Exception as e:
-                results[dir_path]["write"] = f"ERROR: {e}"
-            try:
-                with open(test_file, "r") as f:
-                    content = f.read()
-                results[dir_path]["read"] = content
-            except Exception as e:
-                results[dir_path]["read"] = f"ERROR: {e}"
-            try:
-                os.remove(test_file)
-                results[dir_path]["delete"] = True
-            except Exception as e:
-                results[dir_path]["delete"] = f"ERROR: {e}"
-        except Exception as e:
-            results[dir_path]["error"] = str(e)
-    
-    try: # Try to force garbage collection
-        gc.collect()
-        results["gc"] = "collected"
-    except Exception as e:
-        results["gc"] = f"ERROR: {e}"
-    # Log results
-    print("HEALTH CHECK FS RESULTS:", results)
-    return JSONResponse(results)
 
 router = APIRouter()
 
@@ -114,6 +65,7 @@ async def compare_image(
 
         # Save image to temp file, always flush and close
         if built_in_image:
+            # If the built-in image is an S3 path, download it
             if built_in_image.startswith("s3://"):
                 import boto3
                 from urllib.parse import urlparse
@@ -122,10 +74,11 @@ async def compare_image(
                 bucket = parsed.netloc
                 key = parsed.path.lstrip("/")
                 try:
+                    # download the s3 image to a temp file
                     with open(temp_image_path, "wb") as f:
                         s3.download_fileobj(bucket, key, f)
-                        f.flush()
-                        os.fsync(f.fileno())
+                        f.flush()  # Ensure Python sends data to OS
+                        os.fsync(f.fileno())  # Ensure OS writes data to disk
                     print(f"Downloaded S3 image: {built_in_image} -> {temp_image_path}")
                 except Exception as e:
                     raise HTTPException(404, f"Failed to download S3 image: {built_in_image}")
@@ -136,6 +89,7 @@ async def compare_image(
                     raise HTTPException(500, "S3 image file is empty after download.")
                 
             else:
+                # Or if the built-in-image is a local static file, copy it
                 static_image_path = os.path.join("static", "images", built_in_image)
                 if not os.path.exists(static_image_path):
                     raise HTTPException(404, f"Built-in image not found: {built_in_image}")
@@ -165,7 +119,6 @@ async def compare_image(
         finally:
             # Release image_cv2 and force garbage collection
             del image_cv2
-            import gc
             gc.collect()
 
         # Ensure the temp image file is properly written and flushed
@@ -177,15 +130,15 @@ async def compare_image(
         all_pose_data = {}
         all_sift_keypoints = []
         all_sift_descriptors = []
-
+        
+        # Load pose and SIFT data from S3 folders
         for folder in s3_folders:
             key = folder.replace("s3://route-keypoints/", "").strip("/")
             try:
                 pose = load_pose_data_from_path(key)
-                sift_kps, sift_descs = load_sift_data_from_path(key)
+                sift_kps, sift_descs, frame_dimensions = load_sift_data_from_path(key)
             except Exception as e:
                 logger.exception(f"Error loading pose/SIFT data from S3 for {key}")
-                print(f"Error loading pose/SIFT data from S3 for {key}: {e}")
                 continue
             for frame, items in pose.items():
                 all_pose_data.setdefault(frame, []).extend(items)
@@ -195,7 +148,6 @@ async def compare_image(
             all_pose_data = {int(k): v for k, v in all_pose_data.items()}
         except Exception as e:
             logger.exception("Error converting pose data keys to int")
-            print(f"Error converting pose data keys to int: {e}")
 
         def parse_color(s):
             try:
@@ -214,10 +166,9 @@ async def compare_image(
                 try:
                     os.remove(out_file)
                 except Exception as e:
-                    print(f"Failed to delete old output video: {out_file}", e)
+                    logger.exception(f"Failed to delete old output video: {out_file}")
 
         # Clear any potential SIFT caches to prevent stale data between requests
-        import gc
         gc.collect()
         
         try:
@@ -231,7 +182,8 @@ async def compare_image(
                 sift_up=sift_up,
                 sift_down=sift_down,
                 line_color=line_color_tuple,
-                point_color=point_color_tuple
+                point_color=point_color_tuple,
+                frame_dimensions=frame_dimensions,
             )
             if result == "NO_MATCHES":
                 raise HTTPException(422, "No matching features found between the uploaded image and the climbing route. Please try a different image or route.")

@@ -3,7 +3,6 @@ import cv2
 
 
 def get_transformation_info(T):
-    """Extract readable info from transformation matrix"""
     if T is None:
         return "No transformation"
     
