@@ -17,7 +17,7 @@ import gc
 
 from app.services.load_json_s3 import load_pose_data_from_path, load_sift_data_from_path
 from app.services.compare_pose import (
-    create_video_from_static_image_streamed,  
+    generate_video,  
     convert_video_for_browser,
     VIDEO_OUT_DIR,
 )
@@ -172,7 +172,7 @@ async def compare_image(
         gc.collect()
         
         try:
-            result = create_video_from_static_image_streamed(
+            result = generate_video(
                 image_path=temp_image_path,
                 pose_landmarks=all_pose_data,
                 stored_keypoints_all=all_sift_keypoints,
