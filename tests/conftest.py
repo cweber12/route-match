@@ -120,13 +120,48 @@ def enable_compare_with_mocks(tmp_path_factory):
     sys.modules.setdefault("numpy", fake_np)
 
     # 2) Import the compare module (it imports functions at module scope)
+    # Try to load the real compare router from its file path; if that fails
+    # (missing package path or native deps), fall back to the pure-Python
+    # test router implemented in tests/compare_test_router.py
+    import importlib.util
+
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    # Ensure project root is on sys.path so 'app' package can be imported
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    compare_path = os.path.join(project_root, "app", "routers", "compare.py")
+    test_router_path = os.path.join(os.path.dirname(__file__), "compare_test_router.py")
+
+    def _load_module_from_path(mod_name, path):
+        spec = importlib.util.spec_from_file_location(mod_name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load module {mod_name} from {path}")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[mod_name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
     try:
-        compare_mod = importlib.import_module("app.routers.compare")
-    except Exception as e:
-        pytest.skip(f"Could not import real compare module: {e}")
+        if os.path.exists(compare_path):
+            compare_mod = _load_module_from_path("app.routers.compare", compare_path)
+        else:
+            raise FileNotFoundError("compare.py not found")
+    except Exception:
+        # fallback to test router
+        compare_mod = _load_module_from_path("tests.compare_test_router", test_router_path)
 
     # 3) Stub heavy functions used by compare router (transform_skeleton functions)
-    from app import main as main_mod
+    # Resolve the main app module (the tests import `main` at top-level)
+    if "main" in sys.modules:
+        main_mod = sys.modules["main"]
+    else:
+        try:
+            main_mod = importlib.import_module("main")
+        except Exception:
+            # as a last resort, try to load app/main.py directly
+            main_path = os.path.join(project_root, "app", "main.py")
+            main_mod = _load_module_from_path("main", main_path)
 
     # Ensure VIDEO_OUT_DIR exists on disk
     try:
@@ -160,32 +195,35 @@ def enable_compare_with_mocks(tmp_path_factory):
         except Exception as e:
             return {"error": str(e)}
 
-    # Replace names in the compare module with stubs
-    setattr(compare_mod, "generate_video", _stub_generate_video)
-    setattr(compare_mod, "generate_video_multiframe", _stub_generate_video)
-    setattr(compare_mod, "convert_video_for_browser", _stub_convert_video_for_browser)
+    # If the real module was loaded, replace heavy internals with stubs; if
+    # the test router is used, it is already lightweight and needs no stubbing.
+    if compare_mod.__name__ == "app.routers.compare":
+        setattr(compare_mod, "generate_video", _stub_generate_video)
+        setattr(compare_mod, "generate_video_multiframe", _stub_generate_video)
+        setattr(compare_mod, "convert_video_for_browser", _stub_convert_video_for_browser)
 
-    # Stub S3/JSON loaders so compare can build its internal structures
-    def _stub_load_pose_data_from_path(s3_folder):
-        # return a minimal pose dict where keys are strings
-        return {"0": [{"frame": "0", "landmarks": {}}]}
+        def _stub_load_pose_data_from_path(s3_folder):
+            return {"0": [{"frame": "0", "landmarks": {}}]}
 
-    def _stub_load_sift_data_from_path(s3_folder):
-        # Return legacy single-frame format: (kps_all, descs_all), frame_dims, is_multi_frame=False
-        kps_all = [[]]
-        descs_all = [[0] * 128]
-        frame_dimensions = (64, 64)
-        return (kps_all, descs_all), frame_dimensions, False
+        def _stub_load_sift_data_from_path(s3_folder):
+            kps_all = [[]]
+            descs_all = [[0] * 128]
+            frame_dimensions = (64, 64)
+            return (kps_all, descs_all), frame_dimensions, False
 
-    setattr(compare_mod, "load_pose_data_from_path", _stub_load_pose_data_from_path)
-    setattr(compare_mod, "load_sift_data_from_path", _stub_load_sift_data_from_path)
+        setattr(compare_mod, "load_pose_data_from_path", _stub_load_pose_data_from_path)
+        setattr(compare_mod, "load_sift_data_from_path", _stub_load_sift_data_from_path)
 
     # 4) Remove any previously-registered compare stub routes on main.app
     try:
         app = main_mod.app
-        # remove routes with path '/api/compare-image' if present
-        app.routes = [r for r in app.routes if getattr(r, "path", None) != "/api/compare-image"]
-        # register the real compare router now that we've stubbed heavy internals
+        # remove routes with path '/api/compare-image' if present by mutating router.routes
+        routes = list(app.router.routes)
+        routes = [r for r in routes if getattr(r, "path", None) != "/api/compare-image"]
+        # assign back by clearing and extending router.routes
+        app.router.routes.clear()
+        app.router.routes.extend(routes)
+        # register the real/test compare router now that we've stubbed heavy internals
         app.include_router(compare_mod.router, prefix="/api", tags=["Keypoint Comparison"])
     except Exception as e:
         pytest.skip(f"Failed to include real compare router into app: {e}")
