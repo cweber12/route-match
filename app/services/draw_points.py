@@ -25,63 +25,134 @@ RIGHT_LANDMARKS = set([
 
 # Function to compute the affine transformation matrix using matched 
 # SIFT keypoints. 
-def apply_transform(T, landmarks):
-    """Apply affine transformation to pose landmarks"""
+def apply_transform(T, landmarks, force_apply: bool = False):
     if T is None:
         print("Warning: Transform matrix is None, returning original landmarks")
         return landmarks
 
-    # Log transformation matrix details
-    #if T is not None:
-        #print(f"Transformation matrix shape: {T.shape}, type: {type(T)}")
-
-    if not isinstance(landmarks, (list, tuple)):
-        print(f"Warning: landmarks is not a list/tuple, got {type(landmarks)}")
+    # Log transformation matrix details for debugging
+    try:
+        scale_x = np.sqrt(T[0, 0]**2 + T[0, 1]**2)
+        scale_y = np.sqrt(T[1, 0]**2 + T[1, 1]**2)
+        rotation_angle = np.arctan2(T[1, 0], T[0, 0])
+        rotation_degrees = np.degrees(rotation_angle)
+        print(f"Applying transform: scale=({scale_x:.3f}, {scale_y:.3f}), rotation={rotation_degrees:.1f}°")
+    except Exception:
+        print("Warning: invalid transform format; returning original landmarks")
         return landmarks
 
-    # Validate transformation matrix
+    # More lenient validation - only reject truly extreme cases
     def validate_transformation(transform):
         if transform is None:
-            return False
+            return False, None
+        try:
+            scale_x = np.sqrt(transform[0, 0]**2 + transform[0, 1]**2)
+            scale_y = np.sqrt(transform[1, 0]**2 + transform[1, 1]**2)
+            rotation_angle = np.arctan2(transform[1, 0], transform[0, 0])
+            rotation_degrees = np.degrees(rotation_angle)
+        except Exception:
+            return False, None
 
-        # Extract rotation and scaling components
-        scale_x = np.sqrt(transform[0, 0]**2 + transform[0, 1]**2)
-        scale_y = np.sqrt(transform[1, 0]**2 + transform[1, 1]**2)
-        rotation_angle = np.arctan2(transform[1, 0], transform[0, 0])
-        rotation_degrees = np.degrees(rotation_angle)
+        if scale_x < 0.05 or scale_x > 20.0 or scale_y < 0.05 or scale_y > 20.0:
+            return False, (scale_x, scale_y, rotation_degrees)
+        if abs(rotation_degrees) > 45:
+            return False, (scale_x, scale_y, rotation_degrees)
 
-        # Check for reasonable scaling (between 0.3 and 3.0)
-        if scale_x < 0.3 or scale_x > 3.0 or scale_y < 0.3 or scale_y > 3.0:
-            print(f"Extreme scaling detected: X={scale_x:.3f}, Y={scale_y:.3f}")
-            return False
+        return True, (scale_x, scale_y, rotation_degrees)
 
-        # Check for reasonable rotation (less than 15 degrees)
-        if abs(rotation_degrees) > 15:
-            print(f"Extreme rotation detected: {rotation_degrees:.1f} degrees")
-            return False
-
-        return True
-
-    if not validate_transformation(T):
-        print("Transformation matrix validation failed, returning original landmarks")
-        return landmarks
+    valid, metrics = validate_transformation(T)
+    if not valid:
+        if not force_apply:
+            print("Transformation matrix validation failed, returning original landmarks")
+            return landmarks
+        else:
+            # force-apply: clamp linear components to avoid extreme warps
+            print(f"Transformation validation failed, force_applying with clamping; metrics={metrics}")
+            # clamp column norms
+            A = np.asarray(T, dtype=np.float64)[:, :2].copy()
+            col0 = np.linalg.norm(A[:, 0])
+            col1 = np.linalg.norm(A[:, 1])
+            max_scale = 12.0
+            min_scale = 1.0 / max_scale
+            sf0 = 1.0
+            sf1 = 1.0
+            if col0 > 0:
+                if col0 > max_scale:
+                    sf0 = max_scale / col0
+                elif col0 < min_scale:
+                    sf0 = min_scale / col0
+            if col1 > 0:
+                if col1 > max_scale:
+                    sf1 = max_scale / col1
+                elif col1 < min_scale:
+                    sf1 = min_scale / col1
+            A[:, 0] = A[:, 0] * sf0
+            A[:, 1] = A[:, 1] * sf1
+            T = np.hstack([A, np.asarray(T, dtype=np.float64)[:, 2:3]])
 
     transformed = {}
-    # Log each landmark before and after transformation
-    for lm in landmarks:
-        if "x" in lm and "y" in lm:
+    transform_count = 0
+
+    # Helper to apply affine to (x,y)
+    def apply_to_point(x, y):
+        new_x = T[0, 0] * float(x) + T[0, 1] * float(y) + T[0, 2]
+        new_y = T[1, 0] * float(x) + T[1, 1] * float(y) + T[1, 2]
+        return float(new_x), float(new_y)
+
+    # Support dict keyed by index: {idx: (x,y) | {'x':..,'y':..} }
+    if isinstance(landmarks, dict):
+        for k, v in landmarks.items():
+            try:
+                idx = int(k)
+            except Exception:
+                # skip non-integer keys
+                continue
+            if v is None:
+                continue
+            # v can be tuple/list (x,y) or dict with x,y
+            if isinstance(v, (list, tuple)) and len(v) >= 2:
+                x, y = v[0], v[1]
+            elif isinstance(v, dict) and "x" in v and "y" in v:
+                x, y = v["x"], v["y"]
+            else:
+                # unknown format, skip
+                continue
+            try:
+                new_x, new_y = apply_to_point(x, y)
+                transformed[int(idx)] = (new_x, new_y)
+                transform_count += 1
+                if transform_count <= 3:
+                    print(f"Landmark {idx}: ({x:.1f}, {y:.1f}) -> ({new_x:.1f}, {new_y:.1f})")
+            except Exception as e:
+                print(f"Error transforming landmark {idx}: {e}")
+                continue
+
+    # Support list/tuple of landmark dicts (legacy format)
+    elif isinstance(landmarks, (list, tuple)):
+        for lm in landmarks:
+            if not isinstance(lm, dict):
+                continue
             idx = lm.get("landmark_number") or lm.get("index") or lm.get("id")
             if idx is None:
                 continue
+            if "x" not in lm or "y" not in lm:
+                continue
             try:
                 x, y = float(lm["x"]), float(lm["y"])
-                pt = np.array([[x, y]], dtype=np.float32)
-                # Apply transformation
-                new_pt = cv2.transform(pt[None, :, :], T)[0][0]
-                transformed[int(idx)] = (float(new_pt[0]), float(new_pt[1]))
+                new_x, new_y = apply_to_point(x, y)
+                transformed[int(idx)] = (new_x, new_y)
+                transform_count += 1
+                if transform_count <= 3:
+                    print(f"Landmark {idx}: ({x:.1f}, {y:.1f}) -> ({new_x:.1f}, {new_y:.1f})")
             except Exception as e:
                 print(f"Error transforming landmark {lm}: {e}")
                 continue
+    else:
+        # Unknown landmark container type - return as is but warn
+        print(f"Warning: unsupported landmarks container type: {type(landmarks)}")
+        return landmarks
+
+    print(f"Successfully transformed {transform_count} landmarks")
     return transformed
 
 # use the transformation matrix to draw the pose on the image at the 

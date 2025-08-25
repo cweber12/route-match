@@ -1,3 +1,10 @@
+# app/routers/map_data.py
+# ------------------------------------------------------------------------
+# This module provides an endpoint to fetch map data from the database.
+# It retrieves sub-locations, routes, and state data with coordinates.
+# The data is structured to include latitude and longitude for each feature.
+# ------------------------------------------------------------------------
+
 from fastapi import APIRouter, HTTPException
 import logging
 
@@ -31,7 +38,8 @@ def get_map_data():
 
             logger.info("Querying data with POINT geometry coordinates...")
 
-            # Query sub-location levels with proper POINT geometry extraction
+            # Query sub-location levels to fetch coordinates
+            # Loop through levels 1 to 10 to get all sub-locations
             for level in range(1, 11):
                 try:
                     subloc_query = f"""
@@ -51,13 +59,16 @@ def get_map_data():
                     cursor.execute(subloc_query)
                     subloc_results = cursor.fetchall()
                     
+                    # Check if results are dictionaries or tuples
                     if subloc_results and isinstance(subloc_results[0], dict):
+                        # Convert dict results to a list of dicts
                         results.extend(subloc_results)
                         logger.info(f"Found {len(subloc_results)} areas in SubLocationsLv{level} with coordinates")
                         # Log first result to verify coordinates
                         if subloc_results:
                             first = subloc_results[0]
                             logger.info(f"Sample result: {first['name']} - lat: {first['latitude']}, lng: {first['longitude']}")
+                    # If results are tuples, convert to dicts
                     else:
                         for row in subloc_results:
                             results.append({
@@ -70,6 +81,7 @@ def get_map_data():
                                 "longitude": row[6]
                             })
                         
+                        # Log the number of results found
                         if subloc_results:
                             logger.info(f"Found {len(subloc_results)} areas in SubLocationsLv{level}")
                     

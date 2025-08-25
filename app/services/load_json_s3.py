@@ -90,14 +90,14 @@ def load_pose_data_from_path(s3_folder):
     return poses
 
 def load_sift_data_from_path(s3_folder):
-
     sift_json = os.path.join(LOCAL_STORAGE, f"sift_keypoints_{int(time.time())}_{os.urandom(4).hex()}.json")
     s3_key = find_matching_file(s3_folder, "sift_")
     if not s3_key:
         raise FileNotFoundError("SIFT file not found in S3 folder.")
+    
+    print(f"[download_from_s3] Called with s3_key={s3_key}, local_path={sift_json}")
     download_from_s3(s3_key, sift_json)
 
-    # Ensure downloaded file is not empty
     if os.path.getsize(sift_json) == 0:
         raise ValueError(f"Downloaded SIFT file is empty: {sift_json}")
 
@@ -106,31 +106,57 @@ def load_sift_data_from_path(s3_folder):
             raw_data = json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse JSON content from {sift_json}: {e}")
-        
+
+    frame_dimensions = None
+    
     # Handle both old and new JSON formats
     if isinstance(raw_data, dict) and "sift_features" in raw_data:
         # New format: {"frame_dimensions": {...}, "sift_features": [...]}
         print(f"[load_sift_data_from_path] Detected new JSON format with frame_dimensions")
         frame_dimensions = raw_data.get("frame_dimensions", {})
-        feature_data = raw_data["sift_features"]
+        features_data = raw_data["sift_features"]
         print(f"[load_sift_data_from_path] Frame dimensions: {frame_dimensions}")
     elif isinstance(raw_data, list):
         # Old format: [{"frame": ..., "x": ..., ...}, ...]
         print(f"[load_sift_data_from_path] Detected old JSON format (array)")
-        feature_data = raw_data
+        features_data = raw_data
     else:
         raise ValueError(f"Unrecognized JSON format in {sift_json}")
 
+    # Group features by frame
     frame_dict = {}
-    for entry in feature_data:
+    for entry in features_data:
         frame = entry["frame"]
         frame_dict.setdefault(frame, []).append(entry)
-
-    kps_all, descs_all = [], []
-    for frame in sorted(frame_dict):
-        frame_data = frame_dict[frame]
-        kps = [cv2.KeyPoint(x=d["x"], y=d["y"], size=d["size"]) for d in frame_data]
-        desc = [d["descriptor"] for d in frame_data]
-        kps_all.append(kps)
-        descs_all.append(np.array(desc, dtype=np.float32))
-    return kps_all, descs_all, frame_dimensions if 'frame_dimensions' in locals() else None
+    
+    # Check if this is single-frame or multi-frame data
+    unique_frames = list(frame_dict.keys())
+    is_multi_frame = len(unique_frames) > 1
+    
+    print(f"[load_sift_data_from_path] Found {len(unique_frames)} unique frames: {unique_frames}")
+    print(f"[load_sift_data_from_path] Multi-frame mode: {is_multi_frame}")
+    
+    # Convert to keypoints and descriptors
+    if is_multi_frame:
+        # Multi-frame: return frame-indexed data
+        frame_data = {}
+        for frame in sorted(frame_dict):
+            frame_features = frame_dict[frame]
+            kps = [cv2.KeyPoint(x=d["x"], y=d["y"], size=d["size"]) for d in frame_features]
+            desc = np.array([d["descriptor"] for d in frame_features], dtype=np.float32)
+            frame_data[frame] = {"keypoints": kps, "descriptors": desc}
+        
+        print(f"[load_sift_data_from_path] Returning multi-frame data for {len(frame_data)} frames")
+        return frame_data, frame_dimensions, True  # True indicates multi-frame
+    else:
+        # Single-frame: return legacy format for backward compatibility
+        kps_all, descs_all = [], []
+        for frame in sorted(frame_dict):
+            frame_features = frame_dict[frame]
+            kps = [cv2.KeyPoint(x=d["x"], y=d["y"], size=d["size"]) for d in frame_features]
+            desc = np.array([d["descriptor"] for d in frame_features], dtype=np.float32)
+            kps_all.append(kps)
+            descs_all.append(desc)
+        
+        print(f"[load_sift_data_from_path] Returning single-frame data")
+        return (kps_all, descs_all), frame_dimensions, False  # False indicates single-frame

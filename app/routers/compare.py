@@ -14,10 +14,12 @@ import cv2
 import numpy as np
 import logging
 import gc
+import uuid
 
 from app.services.load_json_s3 import load_pose_data_from_path, load_sift_data_from_path
-from app.services.compare_pose import (
-    generate_video,  
+from app.services.transform_skeleton import (
+    generate_video,
+    generate_video_multiframe,
     convert_video_for_browser,
     VIDEO_OUT_DIR,
 )
@@ -29,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Receives an image w/ defined SIFT bbox from the client
+# Receives image and parameters from the client that are used to compare 
+# the image against stored climbing data to generate a video.
 @router.post("/compare-image")
 async def compare_image(
     image: UploadFile = File(None),
@@ -39,12 +42,10 @@ async def compare_image(
     sift_right: float = Form(20.0),
     sift_up: float = Form(20.0),
     sift_down: float = Form(20.0),
-    pose_lm_in: str = Form(""),
-    sift_kp_in: str = Form(""),
     line_color: str = Form("100,255,0"),
     point_color: str = Form("0,100,255"),
-):
-    import uuid
+    fps: int = Form(24),
+): 
     temp_image_path = None
     try:
         # Save uploaded image to a unique temp file if provided
@@ -127,52 +128,107 @@ async def compare_image(
             import time
             time.sleep(0.1)  # Small delay to ensure file system consistency
             
+        # In app/routers/compare.py, modify the data loading section:
+
         all_pose_data = {}
-        all_sift_keypoints = []
-        all_sift_descriptors = []
-        
+        all_sift_data = [] 
+        frame_dimensions = None
+        is_multi_frame_data = False
+
         # Load pose and SIFT data from S3 folders
         for folder in s3_folders:
             key = folder.replace("s3://route-keypoints/", "").strip("/")
             try:
                 pose = load_pose_data_from_path(key)
-                sift_kps, sift_descs, frame_dimensions = load_sift_data_from_path(key)
+                sift_data, sift_frame_dims, is_multi_frame = load_sift_data_from_path(key)
+                
+                # Use frame dimensions from the first SIFT file that has them
+                if frame_dimensions is None and sift_frame_dims:
+                    frame_dimensions = sift_frame_dims
+                    logger.info(f"Using frame dimensions from {key}: {frame_dimensions}")
+                
+                # Track if any data is multi-frame
+                if is_multi_frame:
+                    is_multi_frame_data = True
+                    logger.info(f"Multi-frame SIFT data detected in {key}")
+                
             except Exception as e:
                 logger.exception(f"Error loading pose/SIFT data from S3 for {key}")
                 continue
+            
+            # Combine pose data
             for frame, items in pose.items():
                 all_pose_data.setdefault(frame, []).extend(items)
-            all_sift_keypoints.extend(sift_kps)
-            all_sift_descriptors.extend(sift_descs)
+            
+            # Store SIFT data (format depends on whether it's multi-frame)
+            all_sift_data.append({
+                "data": sift_data,
+                "is_multi_frame": is_multi_frame,
+                "source": key
+            })
+
+        # Convert pose data keys to integers
         try:
             all_pose_data = {int(k): v for k, v in all_pose_data.items()}
         except Exception as e:
             logger.exception("Error converting pose data keys to int")
 
+        # Parse color parameters before using them
         def parse_color(s):
             try:
                 return tuple(int(x) for x in s.split(","))
             except Exception as e:
                 print(f"Error parsing color string '{s}': {e}")
                 return (100, 255, 0)
+        
         line_color_tuple = rgb_to_bgr(parse_color(line_color))
         point_color_tuple = rgb_to_bgr(parse_color(point_color))
 
-        # Remove output video files before generating new ones
-        raw_path = os.path.join(VIDEO_OUT_DIR, "output_video.mp4")
-        browser_ready = os.path.join(VIDEO_OUT_DIR, "output_video_browser.mp4")
+        # Clean up old video files BEFORE generation (not after!)
+        abs_video_out_dir = os.path.abspath(VIDEO_OUT_DIR)
+        raw_path = os.path.join(abs_video_out_dir, "output_video.mp4")
+        browser_ready = os.path.join(abs_video_out_dir, "output_video_browser.mp4")
+        
+        # Clean up old files
         for out_file in [raw_path, browser_ready]:
             if os.path.exists(out_file):
                 try:
                     os.remove(out_file)
+                    logger.info(f"Removed old video file before generation: {out_file}")
                 except Exception as e:
                     logger.exception(f"Failed to delete old output video: {out_file}")
 
         # Clear any potential SIFT caches to prevent stale data between requests
         gc.collect()
-        
-        try:
-            result = generate_video(
+
+        # Call the appropriate video generation function based on data type
+        if is_multi_frame_data:
+            logger.info("Using multi-frame video generation pipeline")
+            result = generate_video_multiframe(
+                image_path=temp_image_path,
+                pose_landmarks=all_pose_data,
+                sift_data_all=all_sift_data,
+                sift_left=sift_left,
+                sift_right=sift_right,
+                sift_up=sift_up,
+                sift_down=sift_down,
+                line_color=line_color_tuple,
+                point_color=point_color_tuple,
+                frame_dimensions=frame_dimensions,
+                fps=fps,
+            )
+        else:
+            logger.info("Using single-frame video generation pipeline")
+            # Convert to legacy format for existing pipeline
+            all_sift_keypoints = []
+            all_sift_descriptors = []
+            for sift_entry in all_sift_data:
+                if not sift_entry["is_multi_frame"]:
+                    kps_all, descs_all = sift_entry["data"]
+                    all_sift_keypoints.extend(kps_all)
+                    all_sift_descriptors.extend(descs_all)
+            
+            result = generate_video(  # Your existing function
                 image_path=temp_image_path,
                 pose_landmarks=all_pose_data,
                 stored_keypoints_all=all_sift_keypoints,
@@ -184,26 +240,39 @@ async def compare_image(
                 line_color=line_color_tuple,
                 point_color=point_color_tuple,
                 frame_dimensions=frame_dimensions,
+                fps=fps,
             )
-            if result == "NO_MATCHES":
-                raise HTTPException(422, "No matching features found between the uploaded image and the climbing route. Please try a different image or route.")
-            elif result == "NO_TRANSFORM":
-                raise HTTPException(422, "Unable to compute transformation between images. Please try a different image or route.")
-        except HTTPException as he:
-            raise he
-        except Exception as e:
-            logger.exception("Error in video generation")
-            raise HTTPException(500, f"Error in video generation: {e}")
 
-        raw_path = os.path.join(VIDEO_OUT_DIR, "output_video.mp4")
-        browser_ready = os.path.join(VIDEO_OUT_DIR, "output_video_browser.mp4")
+        # Validate the result from video generation
+        if result == "NO_MATCHES":
+            raise HTTPException(422, "No matching features found between the uploaded image and the climbing route. Please try a different image or route.")
+        elif result == "NO_TRANSFORM":
+            raise HTTPException(422, "Unable to compute transformation between images. Please try a different image or route.")
+        elif result in ["EMPTY_VIDEO", "FILE_NOT_CREATED", "FILE_DISAPPEARED"]:
+            raise HTTPException(500, f"Video generation failed: {result}")
+
+        # Video file paths (already defined above during cleanup)
+        logger.info(f"Video generation completed with result: {result}")
+        logger.info(f"Looking for video file at: {raw_path}")
+        
+        # Add a small delay to ensure filesystem sync
+        import time
+        time.sleep(1.0)
+        
         # Check that output_video.mp4 exists and is non-empty before conversion
         try:
             if not os.path.exists(raw_path):
+                # List what files actually exist in the directory
+                if os.path.exists(abs_video_out_dir):
+                    existing_files = os.listdir(abs_video_out_dir)
+                    logger.error(f"Video file not found. Files in {abs_video_out_dir}: {existing_files}")
+                else:
+                    logger.error(f"Output directory doesn't exist: {abs_video_out_dir}")
                 raise HTTPException(500, f"Video file not created: {raw_path}")
             file_size = os.path.getsize(raw_path)
             if file_size == 0:
                 raise HTTPException(500, f"Output video file is empty: {raw_path}")
+            logger.info(f"Video file validation successful: {raw_path} ({file_size} bytes)")
         except Exception as e:
             logger.exception("Error validating output video")
             raise HTTPException(500, f"Error validating output video: {e}")
