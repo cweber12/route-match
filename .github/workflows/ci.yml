@@ -36,6 +36,9 @@ jobs:
         run: |
           # ensure app package is importable and remove stale pyc files
           export PYTHONPATH=${{ github.workspace }}:${{ github.workspace }}/app
+          # create expected runtime directories so StaticFiles mounts succeed
+          mkdir -p temp_uploads
+          mkdir -p static/pose_feature_data
           find . -name "__pycache__" -type d -prune -exec rm -rf '{}' + || true
           python -m pytest -q
 
