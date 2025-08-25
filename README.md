@@ -85,9 +85,16 @@ docker push 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
 
 # EC2 SSH
 
+ssh -i "C:\Projects\ec2-key\rm-key.pem" ec2-user@ec2-3-22-80-166.us-east-2.compute.amazonaws.com
+
 sudo docker pull 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
 
 aws ecr get-login-password --region us-east-2 | sudo docker login --username AWS --password-stdin 537124934274.dkr.ecr.us-east-2.amazonaws.com
 
 sudo docker pull 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
 
+ docker stop route-map-match
+
+ docker rm route-map-match
+
+ sudo docker run -d --env-file .env -p 8000:8000 --name route-map-match 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
