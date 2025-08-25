@@ -14,6 +14,11 @@ from fastapi.responses import JSONResponse
 # Create a FastAPI router instance
 router = APIRouter()
 
+
+@router.get("/health")
+async def health():
+    return JSONResponse({"status": "ok"})
+
 # Health check endpoint for verifying filesystem access and basic I/O
 @router.get("/health-check-fs")
 async def health_check_fs():
