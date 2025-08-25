@@ -34,6 +34,9 @@ jobs:
 
       - name: Run tests
         run: |
+          # ensure app package is importable and remove stale pyc files
+          export PYTHONPATH=${{ github.workspace }}:${{ github.workspace }}/app
+          find . -name "__pycache__" -type d -prune -exec rm -rf '{}' + || true
           python -m pytest -q
 
       - name: Upload test results (xml)
