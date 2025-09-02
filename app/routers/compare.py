@@ -17,12 +17,13 @@ import gc
 import uuid
 
 from app.services.load_json_s3 import load_pose_data_from_path, load_sift_data_from_path
-from app.services.transform_skeleton import (
+from app.services.compare_pose import (
     generate_video,
     generate_video_multiframe,
     convert_video_for_browser,
     VIDEO_OUT_DIR,
 )
+from app.services.job_manager import submit_job, get_job
 from app.services.draw_points import rgb_to_bgr
 
 # Set up logger for debugging
@@ -46,6 +47,7 @@ async def compare_image(
     point_color: str = Form("0,100,255"),
     fps: int = Form(24),
 ): 
+    print("[DIAGNOSTIC] REAL compare-image endpoint called")
     temp_image_path = None
     try:
         # Save uploaded image to a unique temp file if provided
@@ -201,100 +203,89 @@ async def compare_image(
         # Clear any potential SIFT caches to prevent stale data between requests
         gc.collect()
 
-        # Call the appropriate video generation function based on data type
-        if is_multi_frame_data:
-            logger.info("Using multi-frame video generation pipeline")
-            result = generate_video_multiframe(
-                image_path=temp_image_path,
-                pose_landmarks=all_pose_data,
-                sift_data_all=all_sift_data,
-                sift_left=sift_left,
-                sift_right=sift_right,
-                sift_up=sift_up,
-                sift_down=sift_down,
-                line_color=line_color_tuple,
-                point_color=point_color_tuple,
-                frame_dimensions=frame_dimensions,
-                fps=fps,
-            )
-        else:
-            logger.info("Using single-frame video generation pipeline")
-            # Convert to legacy format for existing pipeline
-            all_sift_keypoints = []
-            all_sift_descriptors = []
-            for sift_entry in all_sift_data:
-                if not sift_entry["is_multi_frame"]:
-                    kps_all, descs_all = sift_entry["data"]
-                    all_sift_keypoints.extend(kps_all)
-                    all_sift_descriptors.extend(descs_all)
-            
-            result = generate_video(  # Your existing function
-                image_path=temp_image_path,
-                pose_landmarks=all_pose_data,
-                stored_keypoints_all=all_sift_keypoints,
-                stored_descriptors_all=all_sift_descriptors,
-                sift_left=sift_left,
-                sift_right=sift_right,
-                sift_up=sift_up,
-                sift_down=sift_down,
-                line_color=line_color_tuple,
-                point_color=point_color_tuple,
-                frame_dimensions=frame_dimensions,
-                fps=fps,
-            )
 
-        # Validate the result from video generation
-        if result == "NO_MATCHES":
-            raise HTTPException(422, "No matching features found between the uploaded image and the climbing route. Please try a different image or route.")
-        elif result == "NO_TRANSFORM":
-            raise HTTPException(422, "Unable to compute transformation between images. Please try a different image or route.")
-        elif result in ["EMPTY_VIDEO", "FILE_NOT_CREATED", "FILE_DISAPPEARED"]:
-            raise HTTPException(500, f"Video generation failed: {result}")
+        # Instead of running synchronously, submit a background job.
+        job_input = {
+            "temp_image_path": temp_image_path,
+            "all_pose_data": all_pose_data,
+            "all_sift_data": all_sift_data,
+            "frame_dimensions": frame_dimensions,
+            "is_multi_frame_data": is_multi_frame_data,
+            "sift_left": sift_left,
+            "sift_right": sift_right,
+            "sift_up": sift_up,
+            "sift_down": sift_down,
+            "line_color_tuple": line_color_tuple,
+            "point_color_tuple": point_color_tuple,
+            "fps": fps,
+        }
 
-        # Video file paths (already defined above during cleanup)
-        logger.info(f"Video generation completed with result: {result}")
-        logger.info(f"Looking for video file at: {raw_path}")
-        
-        # Add a small delay to ensure filesystem sync
-        import time
-        time.sleep(1.0)
-        
-        # Check that output_video.mp4 exists and is non-empty before conversion
-        try:
-            if not os.path.exists(raw_path):
-                # List what files actually exist in the directory
-                if os.path.exists(abs_video_out_dir):
-                    existing_files = os.listdir(abs_video_out_dir)
-                    logger.error(f"Video file not found. Files in {abs_video_out_dir}: {existing_files}")
+        def _job_runner(opts):
+            from app.services.compare_pose import convert_video_for_browser, VIDEO_OUT_DIR
+            try:
+                # Generate main video
+                if opts.get("is_multi_frame_data"):
+                    video_result = generate_video_multiframe(
+                        image_path=opts["temp_image_path"],
+                        pose_landmarks=opts["all_pose_data"],
+                        sift_data_all=opts["all_sift_data"],
+                        sift_left=opts["sift_left"],
+                        sift_right=opts["sift_right"],
+                        sift_up=opts["sift_up"],
+                        sift_down=opts["sift_down"],
+                        line_color=opts["line_color_tuple"],
+                        point_color=opts["point_color_tuple"],
+                        frame_dimensions=opts.get("frame_dimensions"),
+                        fps=opts.get("fps", 24),
+                    )
                 else:
-                    logger.error(f"Output directory doesn't exist: {abs_video_out_dir}")
-                raise HTTPException(500, f"Video file not created: {raw_path}")
-            file_size = os.path.getsize(raw_path)
-            if file_size == 0:
-                raise HTTPException(500, f"Output video file is empty: {raw_path}")
-            logger.info(f"Video file validation successful: {raw_path} ({file_size} bytes)")
-        except Exception as e:
-            logger.exception("Error validating output video")
-            raise HTTPException(500, f"Error validating output video: {e}")
+                    all_sift_keypoints = []
+                    all_sift_descriptors = []
+                    for sift_entry in opts.get("all_sift_data", []):
+                        if not sift_entry.get("is_multi_frame"):
+                            kps_all, descs_all = sift_entry["data"]
+                            all_sift_keypoints.extend(kps_all)
+                            all_sift_descriptors.extend(descs_all)
+                    video_result = generate_video(
+                        image_path=opts["temp_image_path"],
+                        pose_landmarks=opts["all_pose_data"],
+                        stored_keypoints_all=all_sift_keypoints,
+                        stored_descriptors_all=all_sift_descriptors,
+                        sift_left=opts["sift_left"],
+                        sift_right=opts["sift_right"],
+                        sift_up=opts["sift_up"],
+                        sift_down=opts["sift_down"],
+                        line_color=opts["line_color_tuple"],
+                        point_color=opts["point_color_tuple"],
+                        frame_dimensions=opts.get("frame_dimensions"),
+                        fps=opts.get("fps", 24),
+                    )
 
-        # Validation before FFmpeg conversion
-        try:
-            if not os.path.exists(raw_path) or os.path.getsize(raw_path) == 0:
-                raise HTTPException(500, "Output video not created or is empty.")
-            convert_video_for_browser(raw_path, browser_ready)
-        except Exception as e:
-            logger.exception("Error converting video for browser")
-            raise HTTPException(500, f"Error converting video for browser: {e}")
+                # Convert to browser-ready format
+                abs_video_out_dir = os.path.abspath(VIDEO_OUT_DIR)
+                raw_path = os.path.join(abs_video_out_dir, "output_video.mp4")
+                browser_ready = os.path.join(abs_video_out_dir, "output_video_browser.mp4")
+                convert_result = convert_video_for_browser(
+                    input_path=raw_path,
+                    output_path=browser_ready,
+                    async_mode=False,
+                    quality_preset="fast"
+                )
+                print(f"Browser conversion result: {convert_result}")
+                return video_result
+            finally:
+                try:
+                    if os.path.exists(opts.get("temp_image_path", "")):
+                        os.remove(opts.get("temp_image_path"))
+                except Exception:
+                    pass
 
-        try:
-            if os.path.exists(temp_image_path):
-                os.remove(temp_image_path)
-        except Exception as e:
-            raise HTTPException(500, f"Failed to delete temp image at end of request: {temp_image_path}: {e}")
-        return JSONResponse({
-            "message": "Video created successfully.",
-            "video_url": "/static/pose_feature_data/output_video/output_video_browser.mp4"
-        })
+        logger.info(f"Submitting compare job with input: {job_input}")
+        job_id = submit_job(_job_runner, job_input)
+        status_url = f"/api/compare-status/{job_id}"
+        logger.info(f"Enqueued compare job {job_id}, status at {status_url}")
+        return JSONResponse(status_code=202, content={"job_id": job_id, "status_url": status_url})
+
 
     except HTTPException as he:
         print("HTTPException in compare_image route:", he)
@@ -303,4 +294,33 @@ async def compare_image(
         print("Error in compare_image route:", e)
         logger.exception("Error in compare_image route")
         return JSONResponse(status_code=500, content={"error": "Failed to process image."})
+
+
+@router.get("/compare-status/{job_id}")
+def compare_status(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    resp = {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "error": job.get("error"),
+        "result": job.get("result"),
+        "created_at": job.get("created_at"),
+        "finished_at": job.get("finished_at"),
+    }
+
+    # Always include video_url if job is successful and video exists
+    if job.get("status") == "success":
+        abs_video_out_dir = os.path.abspath(VIDEO_OUT_DIR)
+        browser_ready = os.path.join(abs_video_out_dir, "output_video_browser.mp4")
+        if os.path.exists(browser_ready) and os.path.getsize(browser_ready) > 0:
+            resp["video_url"] = "/static/pose_feature_data/output_video/output_video_browser.mp4"
+        else:
+            resp["video_url"] = None
+    else:
+        resp["video_url"] = None
+
+    return JSONResponse(resp)
 

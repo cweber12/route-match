@@ -8,13 +8,8 @@ def detect_sift(image, sift_config=None, bbox=None, detector=None):
     import gc
     gc.collect()
     
-    # Always create a fresh SIFT detector - remove reuse logic to prevent state contamination
-    if detector is not None:
-        print("⚠ Reusing detector is discouraged. Creating fresh one.")
-    
     # Create a fresh SIFT detector for each call to avoid any state contamination
     sift = cv2.SIFT_create(**sift_config)
-    print("✔ Created fresh SIFT detector")
     
     # Log SIFT configuration
     if sift_config:

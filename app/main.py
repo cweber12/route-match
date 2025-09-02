@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import warnings
 import os
+import sys
 
 #import logging
 #logging.basicConfig(level=logging.DEBUG)
@@ -17,13 +18,17 @@ import importlib
 # Import routers lazily - some routers import heavy libraries (cv2/numpy)
 # which can crash during test collection or in CI environments. We attempt
 # to import each router and include it if available.
+# Ensure project root is on sys.path so imports like 'app.routers.*' work
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_this_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 router_modules = [
     "app.routers.auth",
     "app.routers.temp_cleanup",
-    # "app.routers.compare" is intentionally excluded here because it imports
-    # heavy native libraries (cv2/numpy) that can crash during test collection.
-    # It will be imported lazily when the application runs in production.
+    "app.routers.compare",
     "app.routers.browse_user_routes",
+    "app.routers.stream_frames",
     "app.routers.map_data",
     "app.routers.health",
 ]
