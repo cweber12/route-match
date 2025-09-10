@@ -593,57 +593,6 @@ def convert_video_for_browser(
         # Run synchronously
         return _do_conversion()
 
-"""
-def batch_convert_videos(
-    video_paths: list[str], 
-    output_dir: str,
-    max_workers: int = 2,
-    quality_preset: str = "balanced"
-) -> Dict[str, Any]:
-
-    output_dir_path = Path(output_dir)
-    output_dir_path.mkdir(parents=True, exist_ok=True)
-    
-    results = {"success": [], "failed": [], "skipped": []}
-    
-    def convert_single(input_path: str) -> tuple[str, Dict[str, Any]]:
-        input_file = Path(input_path)
-        output_path = output_dir_path / f"{input_file.stem}_browser.mp4"
-        
-        result = convert_video_for_browser(
-            input_path, 
-            str(output_path), 
-            async_mode=False,
-            quality_preset=quality_preset
-        )
-        return input_path, result
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(convert_single, path) for path in video_paths]
-        
-        for future in futures:
-            try:
-                input_path, result = future.result(timeout=600)  # 10 min timeout per video
-                
-                if result and result.get("status") == "success":
-                    results["success"].append({"input": input_path, "result": result})
-                elif result and result.get("status") == "already_exists":
-                    results["skipped"].append({"input": input_path, "result": result})
-                else:
-                    results["failed"].append({"input": input_path, "result": result})
-                    
-            except Exception as e:
-                results["failed"].append({
-                    "input": input_path, 
-                    "result": {"error": "batch_timeout", "details": str(e)}
-                })
-    
-    logger.info(f"Batch conversion complete: {len(results['success'])} success, "
-                f"{len(results['failed'])} failed, {len(results['skipped'])} skipped")
-    
-    return results
-"""
-
 @performance_monitor
 def generate_video_multiframe(
     image_path,
