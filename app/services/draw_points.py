@@ -41,7 +41,7 @@ def apply_transform(T, landmarks, force_apply: bool = False):
         print("Warning: invalid transform format; returning original landmarks")
         return landmarks
 
-    # More lenient validation - only reject truly extreme cases
+    # only reject extreme cases
     def validate_transformation(transform):
         if transform is None:
             return False, None

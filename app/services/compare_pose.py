@@ -222,7 +222,6 @@ def generate_video(
     logger.info("Starting optimized video generation with enhanced performance monitoring")
 
     gc.collect()
-    cv2.setUseOptimized(False)
     cv2.setUseOptimized(True)
     cv2.setRNGSeed(0)
 
@@ -594,6 +593,7 @@ def convert_video_for_browser(
         # Run synchronously
         return _do_conversion()
 
+"""
 def batch_convert_videos(
     video_paths: list[str], 
     output_dir: str,
@@ -642,6 +642,7 @@ def batch_convert_videos(
                 f"{len(results['failed'])} failed, {len(results['skipped'])} skipped")
     
     return results
+"""
 
 @performance_monitor
 def generate_video_multiframe(
