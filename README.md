@@ -1,100 +1,166 @@
-_______________________________________________________
-##### CONTENTS #####
-_______________________________________________________
-
-# app_match
-
-Docker container: route-map-app
-Light backend functions for: 
-- login/auth
-- feature matching
-- retrieving data from s3 
-
-______________________________________________________
-##### CLI COMMANDS #####
-______________________________________________________
-
-# DOCKER
-
-BUILD:                docker build -t route-map-match .
-
-STOP:                 docker stop route-map-match
-
-REMOVE:               docker rm route-map-match
-
-RUN:                  docker run --env-file .env -p 8000:8000 --name route-map-match route-map-match
-
-LIST RUNNING:         docker ps
-
-CLEAR CACHE:          docker system prune
-
-________________________________________________________
-
-# server.py
-
-import os
-from app_process.main import app
-import uvicorn
-import ultralytics
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 80))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+# BACKEND MATCHING AND VIDEO OUTPUT
 
 _______________________________________________________
 
-# Dockerfile (process)
+## RouteMap Backend Match
 
-FROM python:3.11-slim
+## Directory Contents
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+### app/
 
-WORKDIR /app_process
+- main.py
 
-RUN apt-get update && apt-get install -y libgl1 && rm -rf /var/lib/apt/lists/*
+#### api/
 
-COPY requirements_process.txt .
-RUN pip install --upgrade pip && pip install -r requirements_process.txt
+##### routers/
+  
+###### auth.py
 
-COPY app_process/ .
-COPY pose_landmarker_full.task .
-COPY pose_landmarker_heavy.task .
-COPY pose_landmarker_lite.task .
-COPY yolov5s.pt .
-COPY yolov8n.pt .
+- @router.post("/register")
+- @router.post("/login")
 
-RUN mkdir -p /app_process/temp_uploads
+###### browse_user_routes.py
 
-ENV AWS_DEFAULT_REGION=us-east-2
+- @router.get("/s3-location-tree")
+- @router.get("/recent-attempts")
+- @router.get("/all-route-coordinates")
+- @router.get("/s3-search")
+- @router.get("/list-coordinates")
+- @router.get("/list-timestamps")
+- @router.get("/debug-list-s3-keys")
+- @router.get("/routes-under-area")
 
-EXPOSE 80
+###### compare.py
 
-CMD ["uvicorn", "app_process.main:app", "--host", "0.0.0.0", "--port", "80"]
+- @router.post("/compare-image")
+- @router.get("/compare-status/{job_id}")
 
-_________________________________________________________________________-
+###### health.py
 
-# ECR
+- @router.get("/health")
+- @router.get("/health-check-fs")
 
+###### map_data.py
+
+- @router.get("/map-data")
+  
+###### stream_frames.py
+
+- @router.post("/stream-frames")
+
+###### temp_cleanup.py
+
+- @router.delete("/clear-temp")
+- @router.post("/clear-output")
+
+#### jobs/
+
+- job_manager.py
+
+#### storage/
+
+##### database/
+
+- route_db_connect.py
+
+##### local/
+
+- json_loader.py
+- temp_file_storage.py
+
+##### s3/
+
+- cache_s3_loc_tree.py
+- load_json_s3.py
+- tree_helpers.py
+
+#### transform/
+
+- draw_points.py
+- transform_skeleton.py
+
+#### video/
+
+- video_writer.py
+
+#### vision/
+
+- detect_img_sift.py
+- match_features.py
+
+## CLI Commands
+
+### DOCKER (LOCAL)
+
+#### STOP AND REMOVE
+
+```bash
+docker stop route-map-match
+
+docker rm route-map-match
+```
+
+#### BUILD AND RUN
+
+```bash
+docker build -t route-map-match .
+
+docker run --env-file .env -p 8000:8000 --name route-map-match route-map-match
+```
+
+docker ps
+
+docker system prune
+
+### AWS ELASTIC CONTAINER REGISTRY (ECR)
+
+#### LOGIN
+
+``` bash
 aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 537124934274.dkr.ecr.us-east-2.amazonaws.com
+```
 
+#### TAG IMAGE TO PUSH
+
+``` bash
 docker tag route-map-match:latest 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
-      
+```
+
+#### PUSH TAGGED IMAGE TO ECR
+
+``` bash
 docker push 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+```
 
-# EC2 SSH
+### AWS ELASTIC COMPUTE (EC2) 
 
+#### OPEN SUCURE SHELL TO EC2 INSTANCE
+
+```bash
 ssh -i "C:\Projects\ec2-key\rm-key.pem" ec2-user@ec2-3-22-80-166.us-east-2.compute.amazonaws.com
+```
 
-sudo docker pull 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+#### VERIFY ECR CREDENTIALS BEFORE PULL
 
+```bash
 aws ecr get-login-password --region us-east-2 | sudo docker login --username AWS --password-stdin 537124934274.dkr.ecr.us-east-2.amazonaws.com
+```
 
+#### PULL LATEST IMAGE FROM ECR
+
+```bash
 sudo docker pull 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+```
 
- docker stop route-map-match
+#### STOP AND REMOVE CURRENT CONTAINER RUNNING ON EC2
 
- docker rm route-map-match
+```bash
+docker stop route-map-match || true
+docker rm route-map-match || true
+```
 
- sudo docker run -d --env-file .env -p 8000:8000 --name route-map-match 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+#### RUN DOCKER CONTAINER IN THE BACKGROUND
+
+```bash
+sudo docker run -d --env-file .env -p 8000:8000 --name route-map-match 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+```

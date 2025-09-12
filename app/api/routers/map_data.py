@@ -18,7 +18,7 @@ def get_map_data():
     try:
         # Import here to catch import errors
         try:
-            from app.utils.route_db_connect import get_connection
+            from app.storage.database.route_db_connect import get_connection
             logger.info("Successfully imported get_connection")
         except ImportError as e:
             logger.error(f"Failed to import get_connection: {e}")

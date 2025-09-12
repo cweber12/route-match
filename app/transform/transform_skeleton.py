@@ -34,7 +34,7 @@ if not logger.handlers:
 #from .video_writer import write_pose_video
 from ..vision.detect_img_sift import detect_sift
 from ..vision.match_features import match_features, compute_affine_transform
-from ..transform.draw_points import apply_transform, draw_pose
+from .draw_points import apply_transform, draw_pose
 
 VIDEO_OUT_DIR = os.path.join("temp_uploads", "pose_feature_data", "output_video")
 POSE_JSON = os.path.join("static", "pose_feature_data", "pose_landmarks.json")

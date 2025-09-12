@@ -1,6 +1,6 @@
 import json
 import os
-from app.utils.tree_helpers import build_tree_from_s3_keys, dict_to_node_array
+from app.storage.s3.tree_helpers import build_tree_from_s3_keys, dict_to_node_array
 
 def cache_full_location_tree(user, s3_client, bucket="route-keypoints"):
     """

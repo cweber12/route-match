@@ -1,7 +1,7 @@
 import os
 import cv2
 import numpy as np
-from .draw_points import draw_pose
+from ..transform.draw_points import draw_pose
 
 def write_pose_video(output_path, ref_img, transformed, fps=24):
     if not transformed:
