@@ -108,10 +108,6 @@ docker build -t route-map-match .
 docker run --env-file .env -p 8000:8000 --name route-map-match route-map-match
 ```
 
-docker ps
-
-docker system prune
-
 ### AWS ELASTIC CONTAINER REGISTRY (ECR)
 
 #### LOGIN
