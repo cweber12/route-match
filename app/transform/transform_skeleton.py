@@ -35,85 +35,11 @@ if not logger.handlers:
 from ..vision.detect_img_sift import detect_sift
 from ..vision.match_features import match_features, compute_affine_transform
 from .draw_points import apply_transform, draw_pose
+from ..jobs.job_manager import update_job_progress 
 
 VIDEO_OUT_DIR = os.path.join("temp_uploads", "pose_feature_data", "output_video")
 POSE_JSON = os.path.join("static", "pose_feature_data", "pose_landmarks.json")
 SIFT_JSON = os.path.join("static", "pose_feature_data", "sift_keypoints.json")
-
-def linear_interpolate_pose(pose1, pose2, alpha):   
-    shared_keys = set(pose1.keys()) & set(pose2.keys())
-    result = {}
-    
-    for k in shared_keys:
-        v1, v2 = pose1[k], pose2[k]
-        if isinstance(v1, dict) and isinstance(v2, dict):
-            # Recursively handle nested dictionaries (e.g., body parts with sub-landmarks)
-            result[k] = linear_interpolate_pose(v1, v2, alpha)
-        else:
-            # Vectorized calculation - significantly faster than individual operations
-            # Convert to NumPy arrays once and perform batch mathematical operations
-            v1_arr = np.asarray(v1, dtype=np.float32)
-            v2_arr = np.asarray(v2, dtype=np.float32)
-            result[k] = (1 - alpha) * v1_arr + alpha * v2_arr   
-    return result
-
-
-def generate_video_frames(ref_img, transformed, frame_keys, line_color, point_color, writer):
-    
-    # Pre-allocate frame buffer to avoid memory thrashing
-    h, w = ref_img.shape[:2]
-    frame_buffer = np.empty((h, w, 3), dtype=np.uint8)
-
-    logger.info(f"Starting frame generation for {len(frame_keys)} key frames")
-    total_frames_written = 0
-    
-    # Iterate through consecutive frame pairs and generate all interpolated
-    # frames for each segment in one batch, reducing overhead
-    for i in range(len(frame_keys) - 1):
-        f1, f2 = frame_keys[i], frame_keys[i + 1]
-        pose1, pose2 = transformed[f1], transformed[f2]
-        frame_gap = f2 - f1
-        
-        # Write the first frame of this segment
-        np.copyto(frame_buffer, ref_img)
-        draw_pose(frame_buffer, pose1, line_color, point_color)
-        writer.write(frame_buffer)
-        total_frames_written += 1
-        
-        # Batch interpolation for frame gaps
-        # If there's a gap between frames (0, 15, 30, ... , 15*n), generate interpolated
-        # frames for smooth animation. Pre-calculate all alpha values using NumPy's linspace
-        if frame_gap > 1:
-            logger.debug(f"Generating {frame_gap-1} interpolated frames between {f1} and {f2}")
-            
-            # Pre-calculate all interpolation factors (alpha values) at once
-            # Faster than calculating j / frame_gap in a loop
-            alphas = np.linspace(1/frame_gap, (frame_gap-1)/frame_gap, frame_gap-1)
-            
-            # Generate all interpolated frames for this segment
-            for alpha in alphas:
-                # Reuse the same frame buffer (no new memory allocation)
-                np.copyto(frame_buffer, ref_img)
-                
-                # Use vectorized interpolation (3-5x faster than original)
-                interp_pose = linear_interpolate_pose(pose1, pose2, alpha)
-                draw_pose(frame_buffer, interp_pose, line_color, point_color)
-                
-                writer.write(frame_buffer)
-                total_frames_written += 1
-    
-    # Write the final frame
-    # Handle the last frame separately since the loop processes pairs
-    np.copyto(frame_buffer, ref_img)
-    draw_pose(frame_buffer, transformed[frame_keys[-1]], line_color, point_color)
-    writer.write(frame_buffer)
-    total_frames_written += 1
-    
-    logger.info(f"Successfully generated {total_frames_written} total video frames")
-    
-    # Explicitly delete the frame buffer to free memory immediately
-    # This is especially important for large images or when processing multiple videos
-    del frame_buffer
 
 # Performance monitoring: 
 # Logs execution time and estimates frames per second for video generation
@@ -149,6 +75,90 @@ def performance_monitor(func):
         return result
     return wrapper
 
+def linear_interpolate_pose(pose1, pose2, alpha):   
+    shared_keys = set(pose1.keys()) & set(pose2.keys())
+    result = {}
+    
+    for k in shared_keys:
+        v1, v2 = pose1[k], pose2[k]
+        if isinstance(v1, dict) and isinstance(v2, dict):
+            # Recursively handle nested dictionaries (e.g., body parts with sub-landmarks)
+            result[k] = linear_interpolate_pose(v1, v2, alpha)
+        else:
+            # Vectorized calculation - significantly faster than individual operations
+            # Convert to NumPy arrays once and perform batch mathematical operations
+            v1_arr = np.asarray(v1, dtype=np.float32)
+            v2_arr = np.asarray(v2, dtype=np.float32)
+            result[k] = (1 - alpha) * v1_arr + alpha * v2_arr   
+    return result
+
+
+def generate_video_frames(ref_img, transformed, frame_keys, line_color, point_color, writer, job_id: Optional[str] = None):
+    
+    # Pre-allocate frame buffer to avoid memory thrashing
+    h, w = ref_img.shape[:2]
+    frame_buffer = np.empty((h, w, 3), dtype=np.uint8)
+
+    logger.info(f"Starting frame generation for {len(frame_keys)} key frames")
+    total_frames_written = 0
+    total_frames = frame_keys[len(frame_keys)-1] - frame_keys[0] + 1
+    
+    # Iterate through consecutive frame pairs and generate all interpolated
+    # frames for each segment in one batch, reducing overhead
+    for i in range(len(frame_keys) - 1):
+        f1, f2 = frame_keys[i], frame_keys[i + 1]
+        pose1, pose2 = transformed[f1], transformed[f2]
+        frame_gap = f2 - f1
+        
+        # Write the first frame of this segment
+        np.copyto(frame_buffer, ref_img)
+        draw_pose(frame_buffer, pose1, line_color, point_color)
+        writer.write(frame_buffer)
+        total_frames_written += 1
+        
+        # Update job progress at the specified frame rate (not every frame) 
+        pct = int((total_frames_written / total_frames) * 100)  
+        try:
+            # Passes job progress percentage to job manager
+            update_job_progress(job_id, pct)
+        except Exception:
+            pass
+  
+        
+        # Batch interpolation for frame gaps
+        # If there's a gap between frames (0, 15, 30, ... , 15*n), generate interpolated
+        # frames for smooth animation. Pre-calculate all alpha values using NumPy's linspace
+        if frame_gap > 1:
+            logger.debug(f"Generating {frame_gap-1} interpolated frames between {f1} and {f2}")
+            
+            # Pre-calculate all interpolation factors (alpha values) at once
+            # Faster than calculating j / frame_gap in a loop
+            alphas = np.linspace(1/frame_gap, (frame_gap-1)/frame_gap, frame_gap-1)
+            
+            # Generate all interpolated frames for this segment
+            for alpha in alphas:
+                # Reuse the same frame buffer (no new memory allocation)
+                np.copyto(frame_buffer, ref_img)
+                
+                # Use vectorized interpolation (3-5x faster than original)
+                interp_pose = linear_interpolate_pose(pose1, pose2, alpha)
+                draw_pose(frame_buffer, interp_pose, line_color, point_color)
+                
+                writer.write(frame_buffer)
+                total_frames_written += 1
+    
+    # Write the final frame
+    # Handle the last frame separately since the loop processes pairs
+    np.copyto(frame_buffer, ref_img)
+    draw_pose(frame_buffer, transformed[frame_keys[-1]], line_color, point_color)
+    writer.write(frame_buffer)
+    total_frames_written += 1
+    
+    logger.info(f"Successfully generated {total_frames_written} total video frames")
+    
+    # Explicitly delete the frame buffer to free memory immediately
+    # This is especially important for large images or when processing multiple videos
+    del frame_buffer
 
 @performance_monitor
 
@@ -213,7 +223,9 @@ def generate_video(
     point_color=(0, 100, 255),
     frame_dimensions=None,
     # set the fps for the output video
-    fps=24
+    fps=24, 
+    job_id: Optional[str] = None
+
 ):
 
     # Clean up local storage ONCE before any S3 downloads
@@ -435,7 +447,7 @@ def generate_video(
         
         # Generate video frames
         generate_video_frames(
-            ref_img, transformed, frame_keys, line_color, point_color, writer
+            ref_img, transformed, frame_keys, line_color, point_color, writer, job_id=job_id
         )
         
         writer.release()

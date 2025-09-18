@@ -20,11 +20,12 @@ from app.storage.s3.load_json_s3 import load_pose_data_from_path, load_sift_data
 from app.transform.transform_skeleton import (
     generate_video,
     generate_video_multiframe,
-    convert_video_for_browser,
-    VIDEO_OUT_DIR,
 )
 from app.jobs.job_manager import submit_job, get_job
 from app.transform.draw_points import rgb_to_bgr
+from app.video.convert import convert_video_for_browser
+
+VIDEO_OUT_DIR = os.path.join("temp_uploads", "pose_feature_data", "output_video")
 
 # Set up logger for debugging
 logging.basicConfig(level=logging.DEBUG)
@@ -220,11 +221,12 @@ async def compare_image(
             "fps": fps,
         }
 
-        def _job_runner(opts):
-            from app.transform.transform_skeleton import convert_video_for_browser, VIDEO_OUT_DIR
+        def _job_runner(job_id, opts):
             try:
+
                 # Generate main video
                 if opts.get("is_multi_frame_data"):
+
                     video_result = generate_video_multiframe(
                         image_path=opts["temp_image_path"],
                         pose_landmarks=opts["all_pose_data"],
@@ -237,6 +239,7 @@ async def compare_image(
                         point_color=opts["point_color_tuple"],
                         frame_dimensions=opts.get("frame_dimensions"),
                         fps=opts.get("fps", 24),
+                        job_id=job_id
                     )
                 else:
                     all_sift_keypoints = []
@@ -246,6 +249,7 @@ async def compare_image(
                             kps_all, descs_all = sift_entry["data"]
                             all_sift_keypoints.extend(kps_all)
                             all_sift_descriptors.extend(descs_all)
+
                     video_result = generate_video(
                         image_path=opts["temp_image_path"],
                         pose_landmarks=opts["all_pose_data"],
@@ -259,18 +263,21 @@ async def compare_image(
                         point_color=opts["point_color_tuple"],
                         frame_dimensions=opts.get("frame_dimensions"),
                         fps=opts.get("fps", 24),
+                        job_id=job_id
                     )
 
                 # Convert to browser-ready format
                 abs_video_out_dir = os.path.abspath(VIDEO_OUT_DIR)
                 raw_path = os.path.join(abs_video_out_dir, "output_video.mp4")
                 browser_ready = os.path.join(abs_video_out_dir, "output_video_browser.mp4")
+
                 convert_result = convert_video_for_browser(
                     input_path=raw_path,
                     output_path=browser_ready,
                     async_mode=False,
                     quality_preset="fast"
                 )
+
                 print(f"Browser conversion result: {convert_result}")
                 return video_result
             finally:
@@ -305,6 +312,7 @@ def compare_status(job_id: str):
     resp = {
         "job_id": job_id,
         "status": job.get("status"),
+        "progress": job.get("progress", 0),
         "error": job.get("error"),
         "result": job.get("result"),
         "created_at": job.get("created_at"),

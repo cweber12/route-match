@@ -5,8 +5,8 @@ import warnings
 import os
 import sys
 
-#import logging
-#logging.basicConfig(level=logging.DEBUG)
+import logging
+logging.basicConfig(level=logging.DEBUG)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,19 +18,19 @@ import importlib
 # Import routers lazily - some routers import heavy libraries (cv2/numpy)
 # which can crash during test collection or in CI environments. We attempt
 # to import each router and include it if available.
-# Ensure project root is on sys.path so imports like 'app.routers.*' work
+# Ensure project root is on sys.path so imports like 'app.api.routers.*' work
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(_this_dir)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 router_modules = [
-    "app.routers.auth",
-    "app.routers.temp_cleanup",
-    "app.routers.compare",
-    "app.routers.browse_user_routes",
-    "app.routers.stream_frames",
-    "app.routers.map_data",
-    "app.routers.health",
+    "app.api.routers.auth",
+    "app.api.routers.temp_cleanup",
+    "app.api.routers.compare",
+    "app.api.routers.browse_user_routes",
+    "app.api.routers.stream_frames",
+    "app.api.routers.map_data",
+    "app.api.routers.health",
 ]
 
 warnings.filterwarnings("ignore", category=FutureWarning, module=".*common.*")
@@ -55,13 +55,13 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
 
-        "http://localhost:8080", 
+        "http://localhost:8080", # Backend Processing Local Port
         "http://localhost:5173", # Vite local port 
-        "http://localhost:5174",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-        "https://route-scan.com",
-        "http://route-scan.com",
+        "http://localhost:5174", # Vite alternate local port
+        "http://127.0.0.1:5173", # Vite local port
+        "http://127.0.0.1:5174", # Vite alternate local port
+        "https://route-scan.com", # Production URL
+        "http://route-scan.com", # Production URL without TLS
         "http://localhost:3000",  # For local development
     ],
     allow_credentials=True,
@@ -72,8 +72,8 @@ app.add_middleware(
 # Routers
 
 # Dynamically include routers when available. Failures are logged but do not
-# prevent the app from being importable (useful for tests that don't exercise
-# heavy image-processing endpoints).
+# prevent the app from being importable (for tests that don't use heavy
+# image-processing endpoints).
 for mod_name in router_modules:
     try:
         mod = importlib.import_module(mod_name)
