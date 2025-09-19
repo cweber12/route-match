@@ -55,38 +55,38 @@ _______________________________________________________
 
 #### jobs/
 
-- job_manager.py
+- `job_manager.py`
 
 #### storage/
 
 ##### database/
 
-- route_db_connect.py
+- `route_db_connect.py`
 
 ##### local/
 
-- json_loader.py
-- temp_file_storage.py
+- `json_loader.py`
+- `temp_file_storage.py`
 
 ##### s3/
 
-- cache_s3_loc_tree.py
-- load_json_s3.py
-- tree_helpers.py
+- `cache_s3_loc_tree.py`
+- `load_json_s3.py`
+- `tree_helpers.py`
 
 #### transform/
 
-- draw_points.py
-- transform_skeleton.py
+- `draw_points.py`
+- `transform_skeleton.py`
 
 #### video/
 
-- video_writer.py
+- `video_writer.py`
 
 #### vision/
 
-- detect_img_sift.py
-- match_features.py
+- `detect_img_sift.py`
+- `match_features.py`
 
 ## CLI Commands
 

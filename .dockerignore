@@ -10,6 +10,7 @@ Dockerrun.aws.json
 server.py
 build/
 dist/
+tools/
 .elasticbeanstalk/
 *.md
 

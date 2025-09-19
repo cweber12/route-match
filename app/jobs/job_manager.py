@@ -1,3 +1,9 @@
+# app/jobs/job_manager.py
+# --------------------------------------------------------------------------
+# Simple job manager to run background tasks with status tracking.
+# Uses ThreadPoolExecutor to limit concurrency.
+# Each job gets a unique ID and can report progress.
+# --------------------------------------------------------------------------
 
 import threading
 import uuid
@@ -6,14 +12,16 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 import logging
 
-JOBS = {}
-_LOCK = threading.Lock()
-_EXEC = ThreadPoolExecutor(max_workers=2)
-logger = logging.getLogger("job_manager")
+JOBS = {} # job_id -> job dict
+_LOCK = threading.Lock() # to protect JOBS dict
+_EXEC = ThreadPoolExecutor(max_workers=2) # limit to 2 concurrent jobs
+logger = logging.getLogger("job_manager") 
 
+# Get the current time in seconds since epoch
 def _now():
     return int(time.time())
 
+# Submit a job function to be run in background.
 def submit_job(fn: Callable, *args, **kwargs) -> str:
     job_id = uuid.uuid4().hex
     job = {
@@ -51,6 +59,7 @@ def submit_job(fn: Callable, *args, **kwargs) -> str:
     _EXEC.submit(_runner)
     return job_id
 
+# Update job progress percentage (0-100)
 def update_job_progress(job_id: str, percent: float):
     with _LOCK:
         job = JOBS.get(job_id)
@@ -70,6 +79,7 @@ def update_job_progress(job_id: str, percent: float):
             job["status"] = "success"
             job["finished_at"] = _now()
 
+# Retrieve job info by ID
 def get_job(job_id: str) -> dict | None:
     with _LOCK:
         return JOBS.get(job_id)

@@ -23,8 +23,7 @@ RIGHT_LANDMARKS = set([
     24, 26, 28, 30, 32
 ])
 
-# Function to compute the affine transformation matrix using matched 
-# SIFT keypoints. 
+# Function to compute the affine transformation matrix using matched SIFT keypoints. 
 def apply_transform(T, landmarks, force_apply: bool = False):
     if T is None:
         print("Warning: Transform matrix is None, returning original landmarks")

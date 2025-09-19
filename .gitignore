@@ -1,4 +1,8 @@
 *.tar
 *.spec
-venv/
+.venv/
 .ebignore
+node_modules/
+.vscode/
+__pycache__/
+*.pyc

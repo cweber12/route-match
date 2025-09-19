@@ -15,6 +15,16 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 import importlib
 
+# Enable quiet/skip mode when exporting routes
+EXPORTING = os.getenv("ROUTE_EXPORT") == "1"
+
+if EXPORTING:
+    # hush noisy libs during export so JSON stays clean
+    for name in ("botocore", "boto3", "numpy", "uvicorn"):
+        logging.getLogger(name).setLevel(logging.CRITICAL)
+    logging.getLogger().setLevel(logging.ERROR)
+    warnings.filterwarnings("ignore")
+
 # Import routers lazily - some routers import heavy libraries (cv2/numpy)
 # which can crash during test collection or in CI environments. We attempt
 # to import each router and include it if available.
@@ -32,6 +42,12 @@ router_modules = [
     "app.api.routers.map_data",
     "app.api.routers.health",
 ]
+
+if EXPORTING:
+    router_modules = [
+        m for m in router_modules
+        if m not in ("app.api.routers.browse_user_routes", "app.api.routers.compare")
+    ]
 
 warnings.filterwarnings("ignore", category=FutureWarning, module=".*common.*")
 

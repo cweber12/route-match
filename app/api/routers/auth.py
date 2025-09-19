@@ -44,13 +44,12 @@ class LoginIn(BaseModel):
 async def register(user: UserIn):
     print("/register endpoint hit!")
     response = table.get_item(Key={'userName': user.username})
-
     print("Table name:", table.name)
     print("Region:", os.getenv("AWS_REGION"))
-
+    # If user already exists, raise an error
     if 'Item' in response:
         raise HTTPException(status_code=400, detail="Username already exists")
-
+    # Hash the password and store the user
     hashed_pw = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt()).decode()
     table.put_item(Item={
         'userName': user.username,
@@ -63,11 +62,13 @@ async def register(user: UserIn):
 # Login a user
 @router.post("/login")
 async def login(data: LoginIn):
+    # Check if user exists
     response = table.get_item(Key={'userName': data.username})
+    # Get the user item from the response
     user = response.get("Item")
+    # Validate input for username and password
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password")
-
     if not bcrypt.checkpw(data.password.encode(), user['password_hash'].encode()):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
