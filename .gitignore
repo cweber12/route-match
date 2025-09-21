@@ -1,13 +1,32 @@
 *.tar
-*.spec
-.venv/
-venv/
-.ebignore
-node_modules/
-.vscode/
-__pycache__/
+
+# Python bytecode and cache
 *.pyc
+*.pyo
+*.pyd
+__pycache__/
+
+# Environment and secrets
 .env
-.print_routes.py
+
+# Git and deployment config
+.git/
+.ebignore
+.elasticbeanstalk/
+
+# Build and distribution artifacts
+build/
+dist/
+
+# Docker and AWS config files
+Dockerfile
+Dockerrun.aws.json
+
+# Local scripts and server entry
+server.py
+
+# Documentation files
+*.md
 
 
+node_modules
