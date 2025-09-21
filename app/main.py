@@ -43,11 +43,7 @@ router_modules = [
     "app.api.routers.health",
 ]
 
-if EXPORTING:
-    router_modules = [
-        m for m in router_modules
-        if m not in ("app.api.routers.browse_user_routes", "app.api.routers.compare")
-    ]
+
 
 warnings.filterwarnings("ignore", category=FutureWarning, module=".*common.*")
 
@@ -111,9 +107,12 @@ for mod_name in router_modules:
 
                 @stub.post("/compare-image")
                 async def compare_image_stub(request: Request):
-                    # Minimal, permissive response for tests
+                    # Call the real job submission logic with dummy/test data
+                    from app.api.routers.compare import submit_job
+                    job_id = submit_job(lambda *a, **kw: None, {})  # Dummy job
                     return JSONResponse({
                         "message": "stubbed compare-image endpoint",
+                        "job_id": job_id,
                         "video_url": "/static/pose_feature_data/output_video/output_video_browser.mp4",
                     })
 

@@ -1,98 +1,15 @@
-# BACKEND MATCHING AND VIDEO OUTPUT
 
-_______________________________________________________
+# RouteMap Backend Match
 
-## RouteMap Backend Match
+Backend for climbing route comparison, pose estimation, and video generation. Provides FastAPI endpoints for image upload, SIFT/pose matching, job management, and browser-ready video output. Includes Docker and AWS deployment instructions, and tools for route export and architecture diagram generation.
 
-## Directory Contents
-
-### app/
-
-- main.py
-
-#### api/
-
-##### routers/
-  
-###### auth.py
-
-- @router.post("/register")
-- @router.post("/login")
-
-###### browse_user_routes.py
-
-- @router.get("/s3-location-tree")
-- @router.get("/recent-attempts")
-- @router.get("/all-route-coordinates")
-- @router.get("/s3-search")
-- @router.get("/list-coordinates")
-- @router.get("/list-timestamps")
-- @router.get("/debug-list-s3-keys")
-- @router.get("/routes-under-area")
-
-###### compare.py
-
-- @router.post("/compare-image")
-- @router.get("/compare-status/{job_id}")
-
-###### health.py
-
-- @router.get("/health")
-- @router.get("/health-check-fs")
-
-###### map_data.py
-
-- @router.get("/map-data")
-  
-###### stream_frames.py
-
-- @router.post("/stream-frames")
-
-###### temp_cleanup.py
-
-- @router.delete("/clear-temp")
-- @router.post("/clear-output")
-
-#### jobs/
-
-- `job_manager.py`
-
-#### storage/
-
-##### database/
-
-- `route_db_connect.py`
-
-##### local/
-
-- `json_loader.py`
-- `temp_file_storage.py`
-
-##### s3/
-
-- `cache_s3_loc_tree.py`
-- `load_json_s3.py`
-- `tree_helpers.py`
-
-#### transform/
-
-- `draw_points.py`
-- `transform_skeleton.py`
-
-#### video/
-
-- `video_writer.py`
-
-#### vision/
-
-- `detect_img_sift.py`
-- `match_features.py`
+---
 
 ## CLI Commands
 
-### DOCKER (LOCAL)
+### Docker (Local)
 
-#### STOP AND REMOVE
+#### Stop and Remove
 
 ```bash
 docker stop route-map-match
@@ -108,9 +25,9 @@ docker build -t route-map-match .
 docker run --env-file .env -p 8000:8000 --name route-map-match route-map-match
 ```
 
-### AWS ELASTIC CONTAINER REGISTRY (ECR)
+### AWS Elastic Container Registry (ECR)
 
-#### LOGIN
+#### Login
 
 ``` bash
 aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 537124934274.dkr.ecr.us-east-2.amazonaws.com
@@ -128,9 +45,9 @@ docker tag route-map-match:latest 537124934274.dkr.ecr.us-east-2.amazonaws.com/r
 docker push 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
 ```
 
-### AWS ELASTIC COMPUTE (EC2) 
+### AWS Elastic Compute (EC2)
 
-#### OPEN SUCURE SHELL TO EC2 INSTANCE
+#### Open Secure Shell to EC2 Instance
 
 ```bash
 ssh -i "C:\Projects\ec2-key\rm-key.pem" ec2-user@ec2-3-22-80-166.us-east-2.compute.amazonaws.com
@@ -160,3 +77,24 @@ docker rm route-map-match || true
 ```bash
 sudo docker run -d --env-file .env -p 8000:8000 --name route-map-match 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
 ```
+
+## Architecture Diagram & Route Export
+
+### Export Routes
+
+```bash
+$env:ROUTE_EXPORT = "1"  
+```
+
+```bash
+$env:APP_MODULE   = "app.main:app"
+```
+
+```bash
+python tools/export_routes.py --out routes.json
+```
+
+### Generate Handler
+
+```bash
+python tools/callgraph_ast.py app --out callgraph.json --prefix app

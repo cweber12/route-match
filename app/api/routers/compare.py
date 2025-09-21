@@ -204,7 +204,6 @@ async def compare_image(
         # Clear any potential SIFT caches to prevent stale data between requests
         gc.collect()
 
-
         # Instead of running synchronously, submit a background job.
         job_input = {
             "temp_image_path": temp_image_path,
