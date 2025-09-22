@@ -17,10 +17,8 @@ import gc
 import uuid
 
 from app.storage.s3.load_json_s3 import load_pose_data_from_path, load_sift_data_from_path
-from app.transform.transform_skeleton import (
-    generate_video,
-    generate_video_multiframe,
-)
+from app.pipelines.video_tripod import generate_video
+from app.pipelines.video_moving import generate_video_multiframe
 from app.jobs.job_manager import submit_job, get_job
 from app.transform.draw_points import rgb_to_bgr
 from app.video.convert import convert_video_for_browser

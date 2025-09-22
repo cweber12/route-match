@@ -47,7 +47,7 @@ def detect_sift(image, sift_config=None, bbox=None, detector=None):
         print("SIFT detection failed - got empty keypoints or descriptors")
         return [], None
     
-    print(f"✔ SIFT detection successful: {len(keypoints)} keypoints, descriptor shape: {descriptors.shape}")
+    print(f"SIFT detection successful: {len(keypoints)} keypoints, descriptor shape: {descriptors.shape}")
     
     # Log bounding box if provided
     if bbox:
