@@ -6,48 +6,58 @@ on:
   pull_request:
     branches: [ "main" ]
 
-jobs:
+  workflow_dispatch:
 
+concurrency:
+  group: docker-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
   build:
+    # Guard: skip secreted steps for forked PRs
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
 
     runs-on: ubuntu-latest
 
+    permissions:
+      id-token: write  
+      contents: read
+
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-2
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::537124934274:role/GitHubOIDCRoleECR
+          aws-region: us-east-2
 
-    - name: Login to Amazon ECR
-      uses: aws-actions/amazon-ecr-login@v1
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v2
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
-      with:
-        install: true
-        driver-opts: |
-          image=moby/buildkit:master
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+          driver-opts: |
+            image=moby/buildkit:master
 
-    - name: Cache pip
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: pip-cache-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          pip-cache-${{ runner.os }}-
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-cache-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            pip-cache-${{ runner.os }}-
 
-    - name: Build, tag and push Docker image to ECR (with cache)
-      uses: docker/build-push-action@v4
-      with:
-        context: .
-        push: true
-        tags: 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
-        cache-from: type=registry,ref=537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:cache
-        cache-to: type=registry,ref=537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:cache,mode=max
+      - name: Build, tag and push Docker image to ECR (with cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: 537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:latest
+          cache-from: type=registry,ref=537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:cache
+          cache-to: type=registry,ref=537124934274.dkr.ecr.us-east-2.amazonaws.com/route-map-match:cache,mode=max

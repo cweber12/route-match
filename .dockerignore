@@ -1,16 +1,30 @@
+
+# Python bytecode and cache
 *.pyc
-.env
-__pycache__/
 *.pyo
 *.pyd
+__pycache__/
+
+# Environment and secrets
+.env
+
+# Git and deployment config
 .git/
 .ebignore
-Dockerfile
-Dockerrun.aws.json
-server.py
+.elasticbeanstalk/
+
+# Build and distribution artifacts
 build/
 dist/
+
+# Docker and AWS config files
+Dockerfile
+Dockerrun.aws.json
+
+# Local scripts and tools
+server.py
 tools/
-.elasticbeanstalk/
+
+# Documentation files
 *.md
 

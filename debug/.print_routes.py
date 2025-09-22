@@ -1,3 +1,6 @@
+# .print_routes.py
+# Print the routes in the FastAPI app for debugging 
+# Usage: python .print_routes.py
 import sys, os
 sys.path.insert(0, os.path.abspath('.'))
 import importlib

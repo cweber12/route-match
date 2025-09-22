@@ -1,3 +1,6 @@
+# .call_health.py
+# Call the /api/health endpoint and print the result for debugging
+# Usage: python .call_health.py
 from fastapi.testclient import TestClient
 import sys, os
 sys.path.insert(0, os.path.abspath('.'))
