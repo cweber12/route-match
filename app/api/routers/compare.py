@@ -15,6 +15,7 @@ import numpy as np
 import logging
 import gc
 import uuid
+import base64
 
 from app.storage.s3.load_json_s3 import load_pose_data_from_path, load_sift_data_from_path
 from app.pipelines.video_tripod import generate_video
@@ -329,3 +330,12 @@ def compare_status(job_id: str):
 
     return JSONResponse(resp)
 
+@router.get("/current-image")
+def current_image():
+    try:
+        with open("temp_uploads/pose_feature_data/current.jpg", "rb") as f:
+            img_data = f.read()
+        return JSONResponse(content={"image": base64.b64encode(img_data).decode('utf-8')})
+    except Exception as e:
+        logger.error(f"Error loading current image: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to load current image."})

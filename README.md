@@ -1,4 +1,4 @@
-# RouteMap Backend Match
+# RouteScan Backend Match
 
 Backend for climbing route comparison, pose estimation, and video generation. Provides FastAPI endpoints for image upload, SIFT/pose matching, job management, and browser-ready video output. Includes Docker and AWS deployment instructions, and tools for route export and architecture diagram generation.
 
