@@ -38,6 +38,7 @@ router_modules = [
     "app.api.routers.temp_cleanup",
     "app.api.routers.compare",
     "app.api.routers.browse_user_routes",
+    "app.api.routers.download_exe",
     "app.api.routers.stream_frames",
     "app.api.routers.map_data",
     "app.api.routers.health",
