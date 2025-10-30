@@ -33,20 +33,15 @@ def get_s3_client():
 async def download_executable():
     """
     Download RouteScanner.exe from S3 and stream it to the frontend
-    
-    Returns:
-        StreamingResponse: Binary file stream with appropriate headers
-        
-    Raises:
-        HTTPException: If file not found or S3 access fails
     """
     try:
         s3_client = get_s3_client()
         
         # Check if file exists first
         try:
-            s3_client.head_object(Bucket=EXECUTABLE_BUCKET, Key=EXECUTABLE_KEY)
-            logger.info(f"Found executable {EXECUTABLE_KEY} in bucket {EXECUTABLE_BUCKET}")
+            head_response = s3_client.head_object(Bucket=EXECUTABLE_BUCKET, Key=EXECUTABLE_KEY)
+            file_size = head_response.get('ContentLength', 0)
+            logger.info(f"Found executable {EXECUTABLE_KEY} in bucket {EXECUTABLE_BUCKET}, size: {file_size}")
         except ClientError as e:
             if e.response['Error']['Code'] == '404':
                 logger.error(f"Executable not found: {EXECUTABLE_KEY}")
@@ -59,19 +54,29 @@ async def download_executable():
         try:
             logger.info(f"Starting download of {EXECUTABLE_KEY}")
             response = s3_client.get_object(Bucket=EXECUTABLE_BUCKET, Key=EXECUTABLE_KEY)
-            file_content = response['Body'].read()
             
-            logger.info(f"Successfully downloaded {len(file_content)} bytes")
+            # Read the entire file content to ensure complete transfer
+            file_content = response['Body'].read()
+            logger.info(f"Successfully read {len(file_content)} bytes from S3")
+            
+            # Verify we got the expected amount of data
+            if len(file_content) != file_size:
+                logger.error(f"File size mismatch: expected {file_size}, got {len(file_content)}")
+                raise HTTPException(status_code=500, detail="File download incomplete")
+            
+            logger.info(f"Successfully prepared streaming response for {file_size} bytes")
             
             return StreamingResponse(
                 io.BytesIO(file_content),
-                media_type="application/octet-stream",
+                media_type="application/x-msdownload",
                 headers={
                     "Content-Disposition": "attachment; filename=RouteScanner.exe",
-                    "Content-Length": str(len(file_content)),
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                    "Expires": "0"
+                    "Content-Length": str(file_size),
+                    "Content-Type": "application/x-msdownload",
+                    "Access-Control-Expose-Headers": "Content-Disposition, Content-Length",
+                    "Accept-Ranges": "bytes", 
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Expose-Headers": "Content-Disposition, Content-Length, Content-Type",
                 }
             )
             
@@ -80,7 +85,6 @@ async def download_executable():
             raise HTTPException(status_code=500, detail="Failed to download executable from S3")
             
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         logger.error(f"Unexpected error in download_executable: {e}")

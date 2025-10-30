@@ -27,4 +27,5 @@ tools/
 
 # Documentation files
 *.md
+aws_cli.txt
 

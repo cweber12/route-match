@@ -27,6 +27,6 @@ server.py
 
 # Documentation files
 *.md
-
+aws_cli.txt
 
 node_modules

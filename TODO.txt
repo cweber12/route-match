@@ -1,0 +1,6 @@
+- Fix RouteScanner.exe download logic. 
+- Map
+  - pull coordinates from route db 
+  - pull coordinates of saved routes from s3 location tree 
+  - option to display all routes, saved routes or both
+- Figure out console error for health check
